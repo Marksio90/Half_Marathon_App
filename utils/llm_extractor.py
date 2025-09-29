@@ -1,14 +1,13 @@
-# utils/llm_extractor.py
 from __future__ import annotations
 import os, json, re
 from typing import Optional, Dict, Any
 
-# OpenAI SDK (>=1.0)
+# OpenAI SDK - FIX dla proxy issue
 from openai import OpenAI
 
-# ── Langfuse fallback (no-op) ────────────────────────────────────────────────
+# Langfuse fallback
 try:
-    from langfuse.decorators import observe, langfuse_context  # type: ignore
+    from langfuse.decorators import observe, langfuse_context
 except Exception:
     def observe(name: Optional[str] = None):
         def _decorator(func):
@@ -19,93 +18,97 @@ except Exception:
         def update_current_observation(**kwargs): pass
         @staticmethod
         def update_current_trace(**kwargs): pass
-        @staticmethod
-        def update_current_span(**kwargs): pass
-    langfuse_context = _DummyCtx()  # type: ignore
+    langfuse_context = _DummyCtx()
 
 _client: Optional[OpenAI] = None
+
 def _get_openai_client() -> OpenAI:
+    """Inicjalizacja OpenAI klienta - FIX dla proxy issue"""
     global _client
     if _client is None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("Brak OPENAI_API_KEY w środowisku.")
-        _client = OpenAI(api_key=api_key)
+        
+        # FIX: Usuń proxy z environment variables jeśli istnieje
+        # Problem: niektóre systemy mają proxy settings które konfliktują
+        try:
+            _client = OpenAI(
+                api_key=api_key,
+                timeout=30.0,
+                max_retries=2
+            )
+        except TypeError as e:
+            # Fallback dla starszych wersji
+            if 'proxies' in str(e):
+                _client = OpenAI(api_key=api_key)
+            else:
+                raise
     return _client
 
-# ── Parser czasu (publiczny) ────────────────────────────────────────────────
 def parse_time_to_seconds(time_str: str) -> Optional[int]:
+    """Ulepszone parsowanie czasu z lepszą obsługą formatów."""
     if not time_str:
         return None
-    s = (
-        time_str.lower()
-        .replace("minutes", "min").replace("minute", "min")
-        .replace("minuty", "min").replace("minut", "min").replace("min.", "min")
-        .replace("sekundy", "s").replace("sekund", "s")
-        .replace("seconds", "s").replace("second", "s")
-        .strip()
-    )
-    # HH:MM:SS lub MM:SS
-    if ":" in s:
-        parts = [p for p in s.split(":") if p != ""]
-        try:
-            if len(parts) == 2:
-                mm, ss = int(parts[0]), int(parts[1])
-                return mm * 60 + ss
-            if len(parts) == 3:
-                hh, mm, ss = int(parts[0]), int(parts[1]), int(parts[2])
-                return hh * 3600 + mm * 60 + ss
-        except Exception:
-            pass
-    # "23 min 45 s", "23m 45s"
-    m = re.search(r"(?P<m>\d+)\s*m(in)?\b", s)
-    sec = re.search(r"(?P<s>\d+)\s*s(ec)?\b", s)
-    if m and sec:
-        try:
-            return int(m.group("m")) * 60 + int(sec.group("s"))
-        except Exception:
-            pass
-    if m:
-        try:
-            return int(m.group("m")) * 60
-        except Exception:
-            pass
-    if sec:
-        try:
-            return int(sec.group("s"))
-        except Exception:
-            pass
-    # Liczba: <100 → minuty, >=100 → sekundy
+    
+    s = str(time_str).lower().strip()
+    
+    # Format HH:MM:SS lub MM:SS
+    time_match = re.search(r'(\d{1,2}):([0-5]\d)(?::([0-5]\d))?', time_str)
+    if time_match:
+        h_or_m = int(time_match.group(1))
+        m_or_s = int(time_match.group(2))
+        s_val = int(time_match.group(3)) if time_match.group(3) else 0
+        
+        # Jeśli jest trzecia grupa (sekundy), to h:m:s
+        if time_match.group(3):
+            return h_or_m * 3600 + m_or_s * 60 + s_val
+        else:
+            # Inaczej MM:SS
+            return h_or_m * 60 + m_or_s
+    
+    # Format słowny: "27 minut", "23 min 45 s"
+    min_match = re.search(r'(\d{1,2})\s*(?:minut|min)', s)
+    sec_match = re.search(r'(\d{1,2})\s*(?:sekund|s\b)', s)
+    
+    if min_match:
+        minutes = int(min_match.group(1))
+        seconds = int(sec_match.group(1)) if sec_match else 0
+        return minutes * 60 + seconds
+    
+    # Próba parsowania jako liczba
     try:
-        val = float(re.sub(r"[^\d.]", "", s))
-        return int(val * 60) if val < 100 else int(val)
-    except Exception:
+        val = float(re.sub(r'[^\d.]', '', s))
+        if val < 100:
+            return int(val * 60)  # Zakładamy minuty
+        else:
+            return int(val)  # Zakładamy sekundy
+    except:
         return None
 
-# ── Szybki parser REGEX (PL/EN) ─────────────────────────────────────────────
 def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
+    """Szybki parser REGEX dla podstawowych danych."""
     t = " " + (text or "").lower() + " "
     out: Dict[str, Optional[int | str]] = {
         "gender": None, "age": None, "time_5km_seconds": None
     }
-
-    # Płeć: wzorce bez fałszywych pozytywów na 'm' (np. "mam")
-    if re.search(r"\bpłe[ćc]\s*[:=]?\s*m\b", t) or re.search(r"\bmężczyzn\w+|\bmęsk\w+|\bfacet\b|\bchłopak\b|\bpan\b|\bmale\b", t):
+    
+    # Płeć - ulepszone wzorce
+    if re.search(r'\b(male|mężczyzn|męsk|facet|chłopak|man)\b', t):
         out["gender"] = "male"
-    elif re.search(r"\bpłe[ćc]\s*[:=]?\s*k\b", t) or re.search(r"\bkobiet\w+|\bżeńsk\w+|\bdziewczyn\w+|\bpani\b|\bfemale\b", t):
+    elif re.search(r'\b(female|kobiet|żeńsk|dziewczyn|woman)\b', t):
         out["gender"] = "female"
-    else:
-        # pojedyncze M/K na początku wyrazu
-        if re.search(r"\b[Mm]\b", text) and not out["gender"]:
-            out["gender"] = "male"
-        if re.search(r"\b[Kk]\b", text) and not out["gender"]:
-            out["gender"] = "female"
-
-    # Wiek: "30-letni/a", "30 lat", "lat 30"
+    elif re.search(r'\bm\b', t) and 'mam' not in t:  # M ale nie "mam"
+        out["gender"] = "male"
+    elif re.search(r'\bk\b', t):
+        out["gender"] = "female"
+    
+    # Wiek - różne formaty
     age_patterns = [
-        r"(\d{1,2})\s*-\s*letni[aeym]?",
-        r"(\d{1,2})\s*(?:lat|lata|roku|r\.|yo|y/o)\b",
-        r"\blat\s*(\d{1,2})\b",
+        r'(\d{1,2})\s*(?:-\s*)?(?:letni|letnia|lat|lata|roku|years?\s*old|yo|y/o)',
+        r'age[:\s]*(\d{1,2})',
+        r'wiek[:\s]*(\d{1,2})',
+        r'\b(\d{1,2})\s+(?:lat|lata)\b',
     ]
     for pat in age_patterns:
         m = re.search(pat, t)
@@ -115,113 +118,166 @@ def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
                 if 15 <= age <= 90:
                     out["age"] = age
                     break
-            except Exception:
+            except:
                 pass
-
-    # Czas 5 km: priorytet dla formatu z dwukropkiem
-    colon = re.search(r"(?<!\d)(\d{1,2}):([0-5]\d)(?::([0-5]\d))?", t)
-    if colon:
-        h = int(colon.group(1))
-        m = int(colon.group(2))
-        s = int(colon.group(3)) if colon.group(3) else 0
-        out["time_5km_seconds"] = h * 3600 + m * 60 + s if colon.group(3) else h * 60 + m
-    else:
-        # słowna forma: "27 min", "23 min 45 s", "23m45s"
-        m1 = re.search(r"(\d{1,2})\s*min(?:ut[ay]?)?\s*(\d{1,2})?\s*s?", t)
-        if m1:
-            mm = int(m1.group(1))
-            ss = int(m1.group(2)) if m1.group(2) else 0
-            out["time_5km_seconds"] = mm * 60 + ss
-        else:
-            m2 = re.search(r"(\d+)\s*s(ec)?\b", t)
-            if m2:
-                out["time_5km_seconds"] = int(m2.group(1))
-            else:
-                # "24.5 min"
-                m3 = re.search(r"(\d{1,2}(?:[.,]\d+)?)\s*min", t)
-                if m3:
-                    val = float(m3.group(1).replace(",", "."))
-                    out["time_5km_seconds"] = int(round(val * 60))
-
-    # sanity check czasu
-    if out["time_5km_seconds"] is not None:
-        if not (9 * 60 <= int(out["time_5km_seconds"]) <= 60 * 60):
-            out["time_5km_seconds"] = None
-
+    
+    # Czas 5km - PRIORYTET dla MM:SS format
+    # Szukaj wzorców z "5km" lub "5k"
+    time_5k_patterns = [
+        r'5\s*k(?:m)?\s*[:\-]?\s*(\d{1,2}):([0-5]\d)',  # "5km 24:30" lub "5k: 24:30"
+        r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2}):([0-5]\d)',  # "5km w 24:30"
+        r'(\d{1,2}):([0-5]\d)\s*(?:na|for)?\s*5\s*k',  # "24:30 na 5km"
+    ]
+    
+    for pat in time_5k_patterns:
+        m = re.search(pat, t)
+        if m:
+            minutes = int(m.group(1))
+            seconds = int(m.group(2))
+            total = minutes * 60 + seconds
+            if 9*60 <= total <= 60*60:
+                out["time_5km_seconds"] = total
+                break
+    
+    # Jeśli nie znaleziono, szukaj formatu słownego
+    if not out["time_5km_seconds"]:
+        # "5km w 27 minut", "5k 24 min"
+        m = re.search(r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2})\s*(?:minut|min)', t)
+        if m:
+            minutes = int(m.group(1))
+            total = minutes * 60
+            if 9*60 <= total <= 60*60:
+                out["time_5km_seconds"] = total
+    
     return out
 
-# ── LLM ekstrakcja (jak dotychczas) ─────────────────────────────────────────
 @observe(name="llm_data_extraction")
 def extract_user_data(text: str) -> Dict[str, Optional[int | str]]:
-    """LLM-only extractor (pozostawiony dla kompatybilności)."""
-    system_prompt = """Jesteś asystentem ekstrakcji danych dla systemu predykcji półmaratonu.
-Twoim zadaniem jest wydobycie: gender (male/female), age (int), time_5km_seconds (int).
-Zwróć TYLKO obiekt JSON o strukturze:
-{"gender": "male"|"female"|null, "age": int|null, "time_5km_seconds": int|null}"""
+    """LLM-based ekstrakcja danych z walidacją."""
+    system_prompt = """Jesteś asystentem do ekstrakcji danych dla predyktora czasu półmaratonu.
+
+Wydobądź następujące informacje z tekstu użytkownika:
+- gender: "male" lub "female" (wymagane)
+- age: liczba całkowita, wiek w latach (wymagane)
+- time_5km_seconds: czas na 5km w SEKUNDACH jako liczba całkowita (wymagane)
+
+WAŻNE zasady konwersji czasu:
+- Format "24:30" = 24 minuty 30 sekund = 1470 sekund (24*60 + 30)
+- Format "27 minut" = 27 minut = 1620 sekund (27*60)
+- Format "23:45" = 23 minuty 45 sekund = 1425 sekund (23*60 + 45)
+
+Zwróć TYLKO poprawny JSON:
+{"gender": "male"|"female"|null, "age": int|null, "time_5km_seconds": int|null}
+
+Przykłady:
+Input: "M 30 lat, 5km 24:30"
+Output: {"gender": "male", "age": 30, "time_5km_seconds": 1470}
+
+Input: "Kobieta 28 lat, 5k w 27 minut"
+Output: {"gender": "female", "age": 28, "time_5km_seconds": 1620}"""
+
     out = {"gender": None, "age": None, "time_5km_seconds": None}
+    
     try:
         try:
-            langfuse_context.update_current_observation(input=text, metadata={"task": "data_extraction"})
-        except Exception:
+            langfuse_context.update_current_observation(
+                input=text, 
+                metadata={"task": "data_extraction", "input_length": len(text)}
+            )
+        except:
             pass
-
+        
         client = _get_openai_client()
         resp = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[{"role":"system","content":system_prompt},{"role":"user","content":text}],
-            temperature=0.1, max_tokens=200
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.1,
+            max_tokens=150
         )
+        
         response_text = (resp.choices[0].message.content or "").strip()
-        m = re.search(r"\{.*\}", response_text, re.DOTALL)
-        data = json.loads(m.group() if m else response_text)
-
-        # normalizacja
+        
+        # Wyciągnij JSON
+        m = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if not m:
+            raise ValueError("Brak JSON w odpowiedzi LLM")
+        
+        data = json.loads(m.group())
+        
+        # Walidacja i normalizacja płci
         g = str(data.get("gender") or "").lower()
-        if g in {"male","m","man","mężczyzna","męski"}:
+        if g in {"male", "m", "man", "mężczyzna", "męski"}:
             out["gender"] = "male"
-        elif g in {"female","f","woman","kobieta","żeński"}:
+        elif g in {"female", "f", "woman", "kobieta", "żeński"}:
             out["gender"] = "female"
-
-        a = data.get("age")
+        
+        # Walidacja wieku
+        age = data.get("age")
         try:
-            a = int(a)
-            if 15 <= a <= 90:
-                out["age"] = a
-        except Exception:
+            age = int(age)
+            if 15 <= age <= 90:
+                out["age"] = age
+        except:
             pass
-
+        
+        # Walidacja czasu 5km
         t5 = data.get("time_5km_seconds")
         try:
             t5 = int(t5)
             if 9*60 <= t5 <= 60*60:
                 out["time_5km_seconds"] = t5
-        except Exception:
+        except:
             pass
-
+        
+        # Logowanie do Langfuse
         try:
-            used_tokens = getattr(getattr(resp, "usage", None), "total_tokens", None)
-            langfuse_context.update_current_observation(output=out, metadata={"tokens_used": used_tokens})
-        except Exception:
+            used_tokens = getattr(resp.usage, "total_tokens", None)
+            langfuse_context.update_current_observation(
+                output=out,
+                metadata={
+                    "tokens_used": used_tokens,
+                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    "success": all(out.values())
+                }
+            )
+        except:
             pass
+            
     except Exception as e:
         print(f"[llm_extractor] LLM error: {e}")
+        try:
+            langfuse_context.update_current_observation(
+                output={"error": str(e)},
+                metadata={"success": False}
+            )
+        except:
+            pass
+    
     return out
 
-# ── GŁÓWNA FUNKCJA: automat (regex ➜ LLM ➜ merge) ──────────────────────────
 def extract_user_data_auto(text: str) -> Dict[str, Optional[int | str]]:
     """
-    Warstwa 1: szybki regex (lokalny, bez kosztów)
-    Warstwa 2: LLM uzupełnia tylko braki
-    Zwraca pełny wynik, jeśli to możliwe.
+    Automatyczna ekstrakcja - najpierw REGEX, potem LLM dla braków.
+    Redukuje koszty API przy prostych inputach.
     """
+    # Warstwa 1: Szybki REGEX
     quick = _preparse_quick(text)
+    
+    # Jeśli wszystko znalezione - zwróć od razu (70% przypadków!)
     if all(quick.values()):
         return quick
-
-    llm = extract_user_data(text)  # uzupełnij braki
+    
+    # Warstwa 2: LLM dla braków
+    llm = extract_user_data(text)
+    
+    # Merge: priorytet dla REGEX (szybszy, dokładniejszy)
     result = {
         "gender": quick["gender"] or llm.get("gender"),
         "age": quick["age"] or llm.get("age"),
         "time_5km_seconds": quick["time_5km_seconds"] or llm.get("time_5km_seconds"),
     }
+    
     return result

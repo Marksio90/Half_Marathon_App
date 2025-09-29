@@ -1,3 +1,9 @@
+from dotenv import load_dotenv
+import os
+
+# Załaduj zmienne środowiskowe z .env
+load_dotenv()
+
 import streamlit as st
 import pandas as pd
 import os

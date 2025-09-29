@@ -130,12 +130,12 @@ def test_spaces_connection():
         )
         
         # Lista plików w folderze data
-        response = s3.list_objects_v2(Bucket=bucket, Prefix='data/')
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='')
         
         if 'Contents' in response:
             print(f"  ✅ Połączenie z Spaces OK!")
             print(f"  📦 Bucket: {bucket}")
-            print(f"  📁 Pliki w data/:")
+            print(f"  📁 Pliki w bucket:")
             for obj in response['Contents']:
                 size_mb = obj['Size'] / (1024 * 1024)
                 print(f"     - {obj['Key']} ({size_mb:.2f} MB)")
@@ -143,8 +143,8 @@ def test_spaces_connection():
             # Sprawdź czy są oba pliki CSV
             files = [obj['Key'] for obj in response['Contents']]
             required_files = [
-                'data/halfmarathon_wroclaw_2023__final.csv',
-                'data/halfmarathon_wroclaw_2024__final.csv'
+                'halfmarathon_wroclaw_2023__final.csv',
+                'halfmarathon_wroclaw_2024__final.csv'
             ]
             
             missing = [f for f in required_files if f not in files]

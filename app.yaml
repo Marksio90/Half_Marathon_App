@@ -1,0 +1,47 @@
+name: halfmarathon-predictor
+region: fra
+
+services:
+- name: web
+  github:
+    repo: your-username/halfmarathon-predictor
+    branch: main
+    deploy_on_push: true
+  
+  dockerfile_path: Dockerfile
+  
+  http_port: 8080
+  
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  
+  envs:
+  - key: DO_SPACES_KEY
+    value: ${DO_SPACES_KEY}
+    type: SECRET
+  - key: DO_SPACES_SECRET
+    value: ${DO_SPACES_SECRET}
+    type: SECRET
+  - key: DO_SPACES_REGION
+    value: fra1
+  - key: DO_SPACES_BUCKET
+    value: halfmarathon-ml
+  - key: OPENAI_API_KEY
+    value: ${OPENAI_API_KEY}
+    type: SECRET
+  - key: LANGFUSE_SECRET_KEY
+    value: ${LANGFUSE_SECRET_KEY}
+    type: SECRET
+  - key: LANGFUSE_PUBLIC_KEY
+    value: ${LANGFUSE_PUBLIC_KEY}
+    type: SECRET
+  - key: LANGFUSE_HOST
+    value: https://cloud.langfuse.com
+  
+  health_check:
+    http_path: /_stcore/health
+    initial_delay_seconds: 60
+    period_seconds: 10
+    timeout_seconds: 5
+    success_threshold: 1
+    failure_threshold: 3

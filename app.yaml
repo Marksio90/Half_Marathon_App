@@ -4,7 +4,7 @@ region: fra
 services:
 - name: web
   github:
-    repo: your-username/halfmarathon-predictor
+    repo: TWOJA_NAZWA_UŻYTKOWNIKA/halfmarathon-predictor  # ← ZMIEŃ TO!
     branch: main
     deploy_on_push: true
   
@@ -13,30 +13,41 @@ services:
   http_port: 8080
   
   instance_count: 1
-  instance_size_slug: basic-xxs
+  instance_size_slug: basic-xxs  # 512MB RAM - wystarczające dla Streamlit
   
   envs:
+  # Digital Ocean Spaces (WYMAGANE)
   - key: DO_SPACES_KEY
-    value: ${DO_SPACES_KEY}
+    scope: RUN_TIME
     type: SECRET
   - key: DO_SPACES_SECRET
-    value: ${DO_SPACES_SECRET}
+    scope: RUN_TIME
     type: SECRET
   - key: DO_SPACES_REGION
     value: fra1
+    scope: RUN_TIME
   - key: DO_SPACES_BUCKET
     value: halfmarathon-ml
+    scope: RUN_TIME
+  
+  # OpenAI (WYMAGANE)
   - key: OPENAI_API_KEY
-    value: ${OPENAI_API_KEY}
+    scope: RUN_TIME
     type: SECRET
+  - key: OPENAI_MODEL
+    value: gpt-4o-mini
+    scope: RUN_TIME
+  
+  # Langfuse (OPCJONALNE - usuń jeśli nie używasz)
   - key: LANGFUSE_SECRET_KEY
-    value: ${LANGFUSE_SECRET_KEY}
+    scope: RUN_TIME
     type: SECRET
   - key: LANGFUSE_PUBLIC_KEY
-    value: ${LANGFUSE_PUBLIC_KEY}
+    scope: RUN_TIME
     type: SECRET
   - key: LANGFUSE_HOST
     value: https://cloud.langfuse.com
+    scope: RUN_TIME
   
   health_check:
     http_path: /_stcore/health

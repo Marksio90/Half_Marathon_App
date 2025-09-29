@@ -6,13 +6,26 @@ textColor = "#262730"
 font = "sans serif"
 
 [server]
-headless = false          # ← false dla local
-address = "localhost"     # ← localhost zamiast 0.0.0.0
-port = 8501              # ← 8501 zamiast 8080
-enableXsrfProtection = false  # ← false dla local
-enableCORS = true
+# PRODUCTION CONFIG - NIE ZMIENIAJ dla deploymentu
+headless = true
+address = "0.0.0.0"
+port = 8080
+enableXsrfProtection = false
+enableCORS = false
+enableWebsocketCompression = true
+
+# Health check endpoint
+baseUrlPath = ""
 
 [browser]
 gatherUsageStats = false
-serverAddress = "localhost"
-serverPort = 8501
+serverAddress = "0.0.0.0"
+serverPort = 8080
+
+[runner]
+# Prevent memory issues
+magicEnabled = false
+fastReruns = true
+
+[logger]
+level = "info"

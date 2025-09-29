@@ -340,12 +340,6 @@ Contributions are welcome! Przeczytaj [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ---
 
-## 📝 License
-
-MIT License - zobacz [LICENSE](LICENSE) file.
-
----
-
 ## 🙏 Acknowledgments
 
 - **Wrocław Half Marathon** - dane treningowe
@@ -353,14 +347,6 @@ MIT License - zobacz [LICENSE](LICENSE) file.
 - **Langfuse** - monitoring LLM
 - **Digital Ocean** - infrastruktura cloud
 - **Streamlit** - framework UI
-
----
-
-## 📞 Kontakt
-
-- **Email**: your-email@example.com
-- **GitHub**: [@your-username](https://github.com/your-username)
-- **Demo**: https://halfmarathon-predictor.ondigitalocean.app
 
 ---
 

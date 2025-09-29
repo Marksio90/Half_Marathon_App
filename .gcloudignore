@@ -1,0 +1,13 @@
+.gcloudignore
+.git
+.gitignore
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.csv
+*.pkl
+notebooks/
+tests/
+.pytest_cache/

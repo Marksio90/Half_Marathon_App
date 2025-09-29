@@ -6,10 +6,13 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+
 from utils.llm_extractor import extract_user_data
 from utils.model_predictor import HalfMarathonPredictor
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
+
+# ✅ UŻYJ SHIMU ZAMIAST BEZPOŚREDNIEGO LANGFUSE
+# (zapewnia no-op jeśli brakuje dekoratorów/metod lub całej biblioteki)
+from utils.langfuse_shim import observe, langfuse_context, langfuse
 
 # Konfiguracja strony
 st.set_page_config(
@@ -17,13 +20,6 @@ st.set_page_config(
     page_icon="🏃",
     layout="wide",
     initial_sidebar_state="expanded"
-)
-
-# Inicjalizacja Langfuse
-langfuse = Langfuse(
-    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 )
 
 # Inicjalizacja session state
@@ -163,13 +159,16 @@ if predict_button:
     else:
         with st.spinner("🤖 Analizuję Twoje dane..."):
             try:
-                # Ekstrakcja danych za pomocą LLM z trackingiem Langfuse
+                # Ekstrakcja danych za pomocą LLM z trackingiem Langfuse (shim obsłuży no-op)
                 @observe(name="user_data_extraction")
                 def extract_and_track(text):
-                    langfuse_context.update_current_trace(
-                        user_id=f"user_{datetime.now().timestamp()}",
-                        metadata={"input_length": len(text)}
-                    )
+                    try:
+                        langfuse_context.update_current_trace(
+                            user_id=f"user_{datetime.now().timestamp()}",
+                            metadata={"input_length": len(text)}
+                        )
+                    except Exception:
+                        pass
                     return extract_user_data(text)
                 
                 extracted_data = extract_and_track(user_input)
@@ -200,10 +199,41 @@ if predict_button:
                                 st.write(f"- **{key_pl}**: {value}")
                 else:
                     # Wykonaj predykcję
-                    predictor = HalfMarathonPredictor()
-                    prediction = predictor.predict(extracted_data)
+                    try:
+                        predictor = HalfMarathonPredictor()
+                    except Exception as e:
+                        st.error("❌ Nie udało się zainicjalizować predyktora (modelu).")
+                        st.info("Upewnij się, że MODEL_PATH wskazuje na istniejący plik modelu lub poprawnie skonfigurowano pobieranie z Spaces.")
+                        st.code(f"MODEL_PATH={os.getenv('MODEL_PATH', '(brak)')}")
+                        # Trackuj błąd inicjalizacji modelu
+                        try:
+                            langfuse.trace(
+                                name="halfmarathon_model_init_error",
+                                input={"user_input": user_input},
+                                output={"error": str(e)},
+                                metadata={"success": False}
+                            )
+                        except Exception:
+                            pass
+                        raise
+
+                    prediction = {}
+                    try:
+                        prediction = predictor.predict(extracted_data)
+                    except Exception as e:
+                        st.error(f"❌ Błąd podczas predykcji: {e}")
+                        try:
+                            langfuse.trace(
+                                name="halfmarathon_prediction_runtime_error",
+                                input=extracted_data,
+                                output={"error": str(e)},
+                                metadata={"success": False}
+                            )
+                        except Exception:
+                            pass
+                        raise
                     
-                    if prediction['success']:
+                    if prediction.get('success'):
                         # Wyświetl predykcję
                         st.markdown(f"""
                         <div class="prediction-box">
@@ -266,16 +296,19 @@ if predict_button:
                             'data': extracted_data
                         })
                         
-                        # Tracking w Langfuse
-                        langfuse.trace(
-                            name="halfmarathon_prediction",
-                            input=extracted_data,
-                            output=prediction,
-                            metadata={
-                                "model_version": predictor.model_metadata.get('version', 'unknown'),
-                                "success": True
-                            }
-                        )
+                        # Tracking w Langfuse (działa jeśli SDK wspiera trace; shim zrobi no-op)
+                        try:
+                            langfuse.trace(
+                                name="halfmarathon_prediction",
+                                input=extracted_data,
+                                output=prediction,
+                                metadata={
+                                    "model_version": getattr(getattr(predictor, "model_metadata", {}), "get", lambda *_: "unknown")("version", "unknown") if hasattr(predictor, "model_metadata") else "unknown",
+                                    "success": True
+                                }
+                            )
+                        except Exception:
+                            pass
                         
                     else:
                         st.error(f"❌ Błąd predykcji: {prediction.get('error', 'Nieznany błąd')}")
@@ -284,13 +317,16 @@ if predict_button:
                 st.error(f"❌ Wystąpił błąd: {str(e)}")
                 st.info("Proszę spróbować ponownie z innymi danymi.")
                 
-                # Trackuj błąd w Langfuse
-                langfuse.trace(
-                    name="halfmarathon_prediction_error",
-                    input={"user_input": user_input},
-                    output={"error": str(e)},
-                    metadata={"success": False}
-                )
+                # Trackuj błąd w Langfuse (no-op jeśli brak)
+                try:
+                    langfuse.trace(
+                        name="halfmarathon_prediction_error",
+                        input={"user_input": user_input},
+                        output={"error": str(e)},
+                        metadata={"success": False}
+                    )
+                except Exception:
+                    pass
 
 # Stopka
 st.markdown("---")

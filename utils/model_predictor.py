@@ -1,228 +1,258 @@
-# utils/model_predictor.py
 from __future__ import annotations
-
 import os
 import math
+import pickle
 from typing import Optional, Dict, Any
 
-# Ładowanie modelu (opcjonalnie)
-def _try_load_joblib(path: str):
+def _try_load_model(path: str):
+    """Próba załadowania modelu z pliku .pkl lub .joblib"""
     try:
-        import joblib  # scikit-learn joblib (albo standalone joblib)
+        import joblib
         return joblib.load(path)
-    except Exception:
-        return None
+    except:
+        try:
+            with open(path, 'rb') as f:
+                return pickle.load(f)
+        except:
+            return None
 
 def _download_from_spaces(
     bucket: str,
     key: str,
     dest_path: str,
-    endpoint: Optional[str],
-    region: Optional[str],
-    access_key: Optional[str],
-    secret_key: Optional[str],
+    endpoint: str,
+    access_key: str,
+    secret_key: str,
 ) -> bool:
-    """
-    Opcjonalne pobieranie z DigitalOcean Spaces (S3 API).
-    Zwraca True, jeśli udało się pobrać; False w przeciwnym razie.
-    """
+    """Pobieranie modelu z Digital Ocean Spaces"""
     try:
-        import boto3  # tylko jeśli masz w env; w przeciwnym razie zwróci False
-        session = boto3.session.Session()
-        s3 = session.client(
-            "s3",
-            endpoint_url=endpoint or None,
-            region_name=region or None,
-            aws_access_key_id=access_key or None,
-            aws_secret_access_key=secret_key or None,
+        import boto3
+        s3 = boto3.client(
+            's3',
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key
         )
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         s3.download_file(bucket, key, dest_path)
+        print(f"✅ Model pobrany z Spaces: {key}")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Nie udało się pobrać modelu z Spaces: {e}")
         return False
-
 
 class HalfMarathonPredictor:
     """
     Predyktor czasu półmaratonu.
-    - Jeśli podasz MODEL_PATH (lub poprawne zmienne Spaces), użyje modelu .joblib.
-    - W przeciwnym razie użyje **stabilnego fallbacku** opartego na czasie 5km + korektach.
+    - Próbuje załadować model ML (XGBoost/RandomForest)
+    - Jeśli nie ma modelu, używa fallback heurystycznego
     """
-
-    def __init__(self) -> None:
+    
+    def __init__(self):
         self.model = None
-        self.model_metadata: Dict[str, Any] = {
+        self.model_metadata = {
             "name": "HalfMarathonPredictor",
-            "version": "fallback-1.0",
-            "source": "heuristic",
+            "version": "1.0",
+            "source": "fallback"
         }
-        self.feature_order = ["time_5km_seconds", "age", "gender_male"]  # jeżeli masz własny model, dopasuj
-
-        # 1) Spróbuj wczytać lokalny model
-        model_path = os.getenv("MODEL_PATH")
-        if model_path and os.path.isfile(model_path):
-            m = _try_load_joblib(model_path)
+        
+        # 1. Próba załadowania lokalnego modelu
+        model_path = os.getenv("MODEL_PATH", "model_cache/halfmarathon_model_latest.pkl")
+        
+        if os.path.isfile(model_path):
+            m = _try_load_model(model_path)
             if m is not None:
                 self.model = m
-                self.model_metadata.update(
-                    {"version": "joblib-local", "source": model_path}
-                )
+                self.model_metadata.update({
+                    "version": "ml-local",
+                    "source": model_path
+                })
+                print(f"✅ Model załadowany lokalnie: {model_path}")
                 return
-
-        # 2) Jeśli nie ma lokalnie – spróbuj pobrać z Spaces (jeśli zmienne są ustawione)
-        bucket = os.getenv("SPACES_BUCKET")
-        key = os.getenv("MODEL_KEY")
-        endpoint = os.getenv("SPACES_ENDPOINT")  # np. https://fra1.digitaloceanspaces.com
-        region = os.getenv("SPACES_REGION", None)
-        access_key = os.getenv("SPACES_KEY")
-        secret_key = os.getenv("SPACES_SECRET")
-        cache_path = os.getenv("MODEL_PATH", ".cache/models/best_model.joblib")
-
-        if bucket and key and access_key and secret_key:
+        
+        # 2. Próba pobrania z Digital Ocean Spaces
+        bucket = os.getenv("DO_SPACES_BUCKET")
+        region = os.getenv("DO_SPACES_REGION", "fra1")
+        access_key = os.getenv("DO_SPACES_KEY")
+        secret_key = os.getenv("DO_SPACES_SECRET")
+        
+        if bucket and access_key and secret_key:
+            endpoint = f"https://{region}.digitaloceanspaces.com"
+            model_key = "models/halfmarathon_model_latest.pkl"
+            cache_path = "model_cache/halfmarathon_model_latest.pkl"
+            
             ok = _download_from_spaces(
                 bucket=bucket,
-                key=key,
+                key=model_key,
                 dest_path=cache_path,
                 endpoint=endpoint,
-                region=region,
                 access_key=access_key,
-                secret_key=secret_key,
+                secret_key=secret_key
             )
+            
             if ok and os.path.isfile(cache_path):
-                m = _try_load_joblib(cache_path)
+                m = _try_load_model(cache_path)
                 if m is not None:
                     self.model = m
-                    self.model_metadata.update(
-                        {"version": "joblib-spaces", "source": f"s3://{bucket}/{key}"}
-                    )
+                    self.model_metadata.update({
+                        "version": "ml-spaces",
+                        "source": f"s3://{bucket}/{model_key}"
+                    })
+                    print(f"✅ Model załadowany z Spaces")
                     return
-
-        # 3) Jeżeli nic się nie udało – zostajemy w trybie fallback (zero crashy)
-        #    self.model = None już ustawione
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Public API
-    # ──────────────────────────────────────────────────────────────────────
+        
+        # 3. Fallback - algorytm heurystyczny
+        print("⚠️ Model ML niedostępny - używam fallback heurystycznego")
+    
     def predict(self, extracted: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Oczekuje słownika z kluczami:
-        - gender: 'male'/'female'
-        - age: int
-        - time_5km_seconds: int
-        Zwraca:
-        {
-            'success': bool,
-            'prediction_seconds': int,
-            'formatted_time': 'H:MM:SS',
-            'details': {...}
-        }
+        Predykcja czasu półmaratonu.
+        
+        Input:
+            {
+                'gender': 'male'/'female',
+                'age': int,
+                'time_5km_seconds': int
+            }
+        
+        Output:
+            {
+                'success': bool,
+                'prediction_seconds': int,
+                'formatted_time': 'H:MM:SS',
+                'hours': int,
+                'minutes': int,
+                'seconds': int,
+                'average_pace_min_per_km': float,
+                'details': {...}
+            }
         """
-        # Walidacja danych
+        # Walidacja danych wejściowych
         gender = (extracted.get("gender") or "").strip().lower()
         age = extracted.get("age")
         t5 = extracted.get("time_5km_seconds")
-
+        
         if gender not in {"male", "female"}:
-            return {"success": False, "error": "Brak lub niepoprawna płeć (male/female)."}
+            return {
+                "success": False,
+                "error": "Brak lub niepoprawna płeć. Wymagane: 'male' lub 'female'."
+            }
+        
         try:
             age = int(age)
-        except Exception:
-            return {"success": False, "error": "Brak lub niepoprawny wiek (liczba całkowita)."}
+        except:
+            return {
+                "success": False,
+                "error": "Brak lub niepoprawny wiek. Wymagana liczba całkowita."
+            }
+        
         try:
             t5 = int(t5)
-        except Exception:
-            return {"success": False, "error": "Brak lub niepoprawny czas 5km w sekundach (int)."}
-
+        except:
+            return {
+                "success": False,
+                "error": "Brak lub niepoprawny czas 5km. Wymagana liczba sekund (int)."
+            }
+        
+        # Walidacja zakresów
         if not (15 <= age <= 90):
-            return {"success": False, "error": "Wiek poza zakresem (15–90)."}
-        if not (9 * 60 <= t5 <= 60 * 60):
-            return {"success": False, "error": "Czas 5km poza sensownym zakresem (9–60 min)."}
-
-        # Próba predykcji modelem .joblib
+            return {
+                "success": False,
+                "error": f"Wiek {age} poza zakresem 15-90 lat."
+            }
+        
+        if not (9*60 <= t5 <= 60*60):
+            return {
+                "success": False,
+                "error": f"Czas 5km poza sensownym zakresem (9-60 minut)."
+            }
+        
+        # Predykcja modelem ML (jeśli dostępny)
         if self.model is not None:
             try:
-                # Przyjmujemy prosty układ cech (dostosuj jeśli Twój model ma inny):
-                gender_male = 1 if gender == "male" else 0
-                X = [[t5, age, gender_male]]
-                y = self._predict_with_loaded_model(X)
-                pred = float(y)
-                if not math.isfinite(pred) or pred <= 0:
-                    raise ValueError("Model zwrócił niefinansowy/niepoprawny wynik.")
-                secs = int(round(pred))
-                return {
-                    "success": True,
-                    "prediction_seconds": secs,
-                    "formatted_time": self._format_time(secs),
-                    "details": {
-                        "mode": "joblib",
-                        "model_source": self.model_metadata.get("source"),
-                        "version": self.model_metadata.get("version"),
-                    },
-                }
-            except Exception:
-                # Jeżeli model nie pasuje do featurów lub coś pójdzie nie tak – miękki fallback
-                pass
-
-        # Heurystyczny fallback – działa zawsze
-        secs = self._predict_fallback_seconds(t5, age, gender)
-        return {
-            "success": True,
-            "prediction_seconds": secs,
-            "formatted_time": self._format_time(secs),
-            "details": {
-                "mode": "fallback",
-                "version": self.model_metadata.get("version"),
-            },
-        }
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Implementacje wewnętrzne
-    # ──────────────────────────────────────────────────────────────────────
-    def _predict_with_loaded_model(self, X):
+                pred = self._predict_ml(t5, age, gender)
+                if pred and math.isfinite(pred) and pred > 0:
+                    return self._format_prediction(pred, mode="ml")
+            except Exception as e:
+                print(f"⚠️ Błąd predykcji ML: {e}, przełączam na fallback")
+        
+        # Fallback heurystyczny
+        pred = self._predict_fallback(t5, age, gender)
+        return self._format_prediction(pred, mode="fallback")
+    
+    def _predict_ml(self, t5: int, age: int, gender: str) -> float:
+        """Predykcja za pomocą modelu ML"""
+        gender_encoded = 1 if gender == "male" else 0
+        
+        # Podstawowe features (dostosuj do swojego modelu)
+        pace_5k = t5 / 5  # tempo w sekundach na km
+        
+        # Próba z różnymi układami cech
+        try:
+            # Wariant 1: podstawowe cechy
+            X = [[gender_encoded, age, t5, pace_5k]]
+            return float(self.model.predict(X)[0])
+        except:
+            try:
+                # Wariant 2: tylko podstawowe
+                X = [[gender_encoded, age, t5]]
+                return float(self.model.predict(X)[0])
+            except:
+                # Jeśli nic nie działa, zwróć None
+                return None
+    
+    def _predict_fallback(self, t5: int, age: int, gender: str) -> int:
         """
-        Minimalna abstrakcja – większość modeli scikit-learn/xgboost ma .predict().
+        Heurystyczna predykcja oparta na współczynnikach.
+        Bazuje na klasycznych kalkulatorach czasu półmaratonu.
         """
-        if hasattr(self.model, "predict"):
-            y = self.model.predict(X)
-            # y może być np. [czas_w_sekundach]
-            return y[0] if hasattr(y, "__len__") else y
-        # jeśli to inny typ modelu, spróbuj wywołać:
-        raise AttributeError("Załadowany model nie posiada metody predict().")
-
-    def _predict_fallback_seconds(self, t5: int, age: int, gender: str) -> int:
-        """
-        Fallback: estymacja czasu HM na bazie 5 km + korekty wieku/płci.
-        Dobrze działa jako rozsądny baseline.
-        """
-        # Bazowy mnożnik (kalibrowany tak, by odpowiadał typowym kalkulatorom):
-        # HM ≈ 4.46 * 5k_time
+        # Bazowy współczynnik (HM ≈ 4.46 * 5k_time)
         base = 4.46 * t5
-
-        # Korekta płci (średnio kobiety ~3% wolniej na długim dystansie – uśrednienie):
+        
+        # Korekta płci (kobiety średnio ~3% wolniej na dłuższym dystansie)
         if gender == "female":
             base *= 1.03
-
-        # Korekta wieku:
-        # 20–35: 0%, 36–50: +0.3%/rok powyżej 35, 51–65: +0.5%/rok powyżej 50, >65: +1.0%/rok
+        
+        # Korekta wieku
         if age < 20:
-            base *= 1.005 * (20 - age)  # młodsi rzadko mają lepszą wytrzymałość
+            base *= 1 + 0.005 * (20 - age)  # młodsi mogą być wolniejsi
+        elif 20 <= age <= 35:
+            pass  # peak performance
         elif 36 <= age <= 50:
-            base *= 1 + 0.003 * (age - 35)
+            base *= 1 + 0.003 * (age - 35)  # +0.3% na rok
         elif 51 <= age <= 65:
-            base *= 1 + 0.003 * (50 - 35) + 0.005 * (age - 50)
-        elif age > 65:
-            base *= 1 + 0.003 * (50 - 35) + 0.005 * (65 - 50) + 0.01 * (age - 65)
-
-        # Delikatne „wypłaszczenie” dla bardzo szybkich i bardzo wolnych
-        base = max(base, 60 * 60)          # min 1h (bez absurdów)
-        base = min(base, 4 * 60 * 60)      # max 4h
-
+            base *= 1 + 0.003 * 15 + 0.005 * (age - 50)  # +0.5% na rok
+        else:  # > 65
+            base *= 1 + 0.003 * 15 + 0.005 * 15 + 0.01 * (age - 65)  # +1% na rok
+        
+        # Ograniczenia
+        base = max(base, 60 * 60)      # min 1h
+        base = min(base, 4 * 60 * 60)  # max 4h
+        
         return int(round(base))
-
-    @staticmethod
-    def _format_time(total_seconds: int) -> str:
-        h = total_seconds // 3600
-        m = (total_seconds % 3600) // 60
-        s = total_seconds % 60
-        return f"{h}:{m:02d}:{s:02d}"
+    
+    def _format_prediction(self, total_seconds: int, mode: str) -> Dict[str, Any]:
+        """Formatowanie wyniku predykcji"""
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        
+        # Tempo średnie (min/km)
+        half_marathon_km = 21.0975
+        avg_pace_sec_per_km = total_seconds / half_marathon_km
+        avg_pace_min_per_km = avg_pace_sec_per_km / 60
+        
+        return {
+            "success": True,
+            "prediction_seconds": total_seconds,
+            "formatted_time": f"{hours}:{minutes:02d}:{seconds:02d}",
+            "hours": hours,
+            "minutes": minutes,
+            "seconds": seconds,
+            "average_pace_min_per_km": round(avg_pace_min_per_km, 2),
+            "details": {
+                "mode": mode,
+                "model_version": self.model_metadata.get("version"),
+                "model_source": self.model_metadata.get("source")
+            }
+        }

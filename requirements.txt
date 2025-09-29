@@ -13,7 +13,7 @@ streamlit==1.39.0
 boto3==1.35.36
 
 # LLM & Monitoring
-openai==1.12.0
+openai==1.54.0  # FIX: Konkretna wersja bez proxy issues
 langfuse==2.53.4
 
 # Utilities

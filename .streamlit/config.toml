@@ -6,16 +6,13 @@ textColor = "#262730"
 font = "sans serif"
 
 [server]
-# 🔹 Lokalny adres, bez headless — otworzy przeglądarkę automatycznie
-headless = false
-address = "localhost"
+headless = true
+address = "0.0.0.0"
 port = 8080
 enableXsrfProtection = true
-# enableCORS NIE ustawiamy – domyślnie true, bez konfliktu
+enableCORS = false
 
 [browser]
-# 🔹 Wyłącza telemetrykę Streamlit
 gatherUsageStats = false
-# 🔹 Jawne wskazanie adresu dla przeglądarki
-serverAddress = "localhost"
+serverAddress = "0.0.0.0"
 serverPort = 8080

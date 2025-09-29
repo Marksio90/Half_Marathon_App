@@ -1,7 +1,5 @@
+# Załaduj zmienne środowiskowe NA POCZĄTKU
 from dotenv import load_dotenv
-import os
-
-# Załaduj zmienne środowiskowe z .env
 load_dotenv()
 
 import streamlit as st
@@ -13,26 +11,26 @@ from utils.model_predictor import HalfMarathonPredictor
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
 
-# Page configuration
+# Konfiguracja strony
 st.set_page_config(
-    page_title="Half Marathon Time Predictor",
+    page_title="Predykcja Czasu Półmaratonu",
     page_icon="🏃",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Initialize Langfuse
+# Inicjalizacja Langfuse
 langfuse = Langfuse(
     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
     host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 )
 
-# Initialize session state
+# Inicjalizacja session state
 if 'prediction_history' not in st.session_state:
     st.session_state.prediction_history = []
 
-# Custom CSS
+# Własne style CSS
 st.markdown("""
     <style>
     .main-header {
@@ -83,89 +81,89 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Header
-st.markdown('<div class="main-header">🏃 Half Marathon Time Predictor</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Predict your half-marathon finish time using AI and machine learning</div>', unsafe_allow_html=True)
+# Nagłówek
+st.markdown('<div class="main-header">🏃 Predyktor Czasu Półmaratonu</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Przewidź swój czas ukończenia półmaratonu używając AI i uczenia maszynowego</div>', unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.header("📊 About")
+    st.header("📊 O aplikacji")
     st.info("""
-    This application uses machine learning to predict your half-marathon finish time based on:
+    Ta aplikacja wykorzystuje uczenie maszynowe do przewidywania czasu ukończenia półmaratonu na podstawie:
     
-    - Gender
-    - Age
-    - 5km personal best time
+    - Płci
+    - Wieku
+    - Najlepszego czasu na 5km
     
-    The model was trained on **20,000+ real race results** from Wrocław Half Marathon 2023-2024.
+    Model został wytrenowany na **ponad 20 000 rzeczywistych wynikach** z Wrocław Półmaratonu 2023-2024.
     """)
     
-    st.header("🎯 How to use")
+    st.header("🎯 Jak używać")
     st.markdown("""
-    1. Enter your information in the text box
-    2. Include: gender, age, and 5km time
-    3. Click "Predict My Time"
-    4. Get your estimated finish time!
+    1. Wprowadź swoje dane w polu tekstowym
+    2. Podaj: płeć, wiek i czas na 5km
+    3. Kliknij "Przewiduj Mój Czas"
+    4. Otrzymaj szacowany czas mety!
     """)
     
-    st.header("📈 Model Performance")
-    st.metric("Mean Absolute Error", "~4.5 minutes")
-    st.metric("R² Score", "0.92")
+    st.header("📈 Wydajność modelu")
+    st.metric("Średni błąd bezwzględny", "~4,5 minuty")
+    st.metric("Wynik R²", "0,92")
     
     if st.session_state.prediction_history:
-        st.header("📜 History")
-        st.write(f"Predictions made: {len(st.session_state.prediction_history)}")
+        st.header("📜 Historia")
+        st.write(f"Wykonanych predykcji: {len(st.session_state.prediction_history)}")
 
-# Main content
+# Główna treść
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.header("📝 Tell us about yourself")
+    st.header("📝 Powiedz nam o sobie")
     
-    # Example prompts
-    with st.expander("💡 Example inputs (click to see)"):
+    # Przykładowe dane wejściowe
+    with st.expander("💡 Przykładowe dane (kliknij aby zobaczyć)"):
         st.code("""
-Example 1:
-"Hi, I'm John, 32 years old male, and my 5km time is 23:45"
+Przykład 1:
+"Cześć, mam na imię Jan, mam 32 lata, jestem mężczyzną i mój czas na 5km to 23:45"
 
-Example 2:
-"I'm a 28-year-old woman and I can run 5km in 27 minutes"
+Przykład 2:
+"Jestem 28-letnią kobietą i potrafię przebiec 5km w 27 minut"
 
-Example 3:
-"Male runner, age 45, 5k PR: 22:30"
+Przykład 3:
+"Mężczyzna, wiek 45 lat, rekord na 5km: 22:30"
         """)
     
-    # User input
+    # Pole wprowadzania danych użytkownika
     user_input = st.text_area(
-        "Describe yourself:",
-        placeholder="e.g., I'm a 30-year-old male runner and my 5km best time is 24:30",
+        "Opisz siebie:",
+        placeholder="np. Jestem 30-letnim mężczyzną i mój najlepszy czas na 5km to 24:30",
         height=120,
-        help="Include your gender, age, and 5km time for the most accurate prediction"
+        help="Podaj swoją płeć, wiek i czas na 5km dla najdokładniejszej predykcji"
     )
     
-    predict_button = st.button("🚀 Predict My Time", type="primary")
+    predict_button = st.button("🚀 Przewiduj Mój Czas", type="primary")
 
 with col2:
-    st.header("ℹ️ Required Information")
+    st.header("ℹ️ Wymagane informacje")
     st.markdown("""
     <div class="info-box">
-        <h4>We need:</h4>
+        <h4>Potrzebujemy:</h4>
         <ul>
-            <li>👤 Gender (male/female)</li>
-            <li>🎂 Age (in years)</li>
-            <li>⏱️ 5km time (MM:SS or HH:MM:SS)</li>
+            <li>👤 Płeć (mężczyzna/kobieta)</li>
+            <li>🎂 Wiek (w latach)</li>
+            <li>⏱️ Czas na 5km (MM:SS lub GG:MM:SS)</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
 
-# Process prediction
+# Przetwarzanie predykcji
 if predict_button:
     if not user_input.strip():
-        st.error("❌ Please enter some information about yourself!")
+        st.error("❌ Proszę wprowadzić informacje o sobie!")
     else:
-        with st.spinner("🤖 Analyzing your information..."):
+        with st.spinner("🤖 Analizuję Twoje dane..."):
             try:
-                # Extract data using LLM with Langfuse tracking
+                # Ekstrakcja danych za pomocą LLM z trackingiem Langfuse
                 @observe(name="user_data_extraction")
                 def extract_and_track(text):
                     langfuse_context.update_current_trace(
@@ -176,85 +174,91 @@ if predict_button:
                 
                 extracted_data = extract_and_track(user_input)
                 
-                # Validate extracted data
+                # Walidacja wyekstraktowanych danych
                 missing_fields = []
                 if not extracted_data.get('gender'):
-                    missing_fields.append("Gender")
+                    missing_fields.append("Płeć")
                 if not extracted_data.get('age'):
-                    missing_fields.append("Age")
+                    missing_fields.append("Wiek")
                 if not extracted_data.get('time_5km_seconds'):
-                    missing_fields.append("5km time")
+                    missing_fields.append("Czas na 5km")
                 
                 if missing_fields:
-                    st.warning(f"⚠️ Missing information: {', '.join(missing_fields)}")
-                    st.info("💡 Please provide all required information for an accurate prediction.")
+                    st.warning(f"⚠️ Brakujące informacje: {', '.join(missing_fields)}")
+                    st.info("💡 Proszę podać wszystkie wymagane informacje dla dokładnej predykcji.")
                     
-                    # Show what was extracted
+                    # Pokaż co zostało zrozumiane
                     if any(extracted_data.values()):
-                        st.write("✅ What I understood:")
+                        st.write("✅ Co zrozumiałem:")
                         for key, value in extracted_data.items():
                             if value:
-                                st.write(f"- **{key}**: {value}")
+                                key_pl = {
+                                    'gender': 'Płeć',
+                                    'age': 'Wiek', 
+                                    'time_5km_seconds': 'Czas 5km (sekundy)'
+                                }.get(key, key)
+                                st.write(f"- **{key_pl}**: {value}")
                 else:
-                    # Make prediction
+                    # Wykonaj predykcję
                     predictor = HalfMarathonPredictor()
                     prediction = predictor.predict(extracted_data)
                     
                     if prediction['success']:
-                        # Display prediction
+                        # Wyświetl predykcję
                         st.markdown(f"""
                         <div class="prediction-box">
-                            <h2>🎯 Your Predicted Half-Marathon Time</h2>
+                            <h2>🎯 Twój Przewidywany Czas Półmaratonu</h2>
                             <div class="prediction-time">{prediction['formatted_time']}</div>
-                            <p style="font-size: 1.2rem;">Based on your profile</p>
+                            <p style="font-size: 1.2rem;">Na podstawie Twojego profilu</p>
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # Show extracted data
-                        st.success("✅ Successfully processed your information!")
+                        # Pokaż wyekstraktowane dane
+                        st.success("✅ Pomyślnie przetworzono Twoje informacje!")
                         
                         col_a, col_b, col_c = st.columns(3)
                         with col_a:
-                            st.metric("Gender", extracted_data['gender'].capitalize())
+                            gender_pl = "Mężczyzna" if extracted_data['gender'] == 'male' else "Kobieta"
+                            st.metric("Płeć", gender_pl)
                         with col_b:
-                            st.metric("Age", f"{extracted_data['age']} years")
+                            st.metric("Wiek", f"{extracted_data['age']} lat")
                         with col_c:
                             time_5km = extracted_data['time_5km_seconds']
-                            st.metric("5km Time", f"{int(time_5km//60)}:{int(time_5km%60):02d}")
+                            st.metric("Czas 5km", f"{int(time_5km//60)}:{int(time_5km%60):02d}")
                         
-                        # Additional insights
-                        st.header("📊 Performance Insights")
+                        # Dodatkowe insighty
+                        st.header("📊 Analiza wydajności")
                         
                         col_x, col_y = st.columns(2)
                         
                         with col_x:
                             st.markdown("""
                             <div class="info-box">
-                                <h4>📈 Pace Information</h4>
+                                <h4>📈 Informacje o tempie</h4>
                             </div>
                             """, unsafe_allow_html=True)
                             
                             avg_pace = prediction['prediction_seconds'] / 21.0975
-                            st.write(f"**Average pace**: {int(avg_pace//60)}:{int(avg_pace%60):02d} min/km")
+                            st.write(f"**Średnie tempo**: {int(avg_pace//60)}:{int(avg_pace%60):02d} min/km")
                             
                             pace_5k = extracted_data['time_5km_seconds'] / 5
-                            st.write(f"**5km pace**: {int(pace_5k//60)}:{int(pace_5k%60):02d} min/km")
+                            st.write(f"**Tempo na 5km**: {int(pace_5k//60)}:{int(pace_5k%60):02d} min/km")
                             
                         with col_y:
                             st.markdown("""
                             <div class="info-box">
-                                <h4>💪 Training Tips</h4>
+                                <h4>💪 Wskazówki treningowe</h4>
                             </div>
                             """, unsafe_allow_html=True)
                             
                             if prediction['prediction_seconds'] < 5400:
-                                st.write("🏆 Elite runner! Focus on maintaining consistency.")
+                                st.write("🏆 Elitarny biegacz! Skup się na utrzymaniu konsystencji.")
                             elif prediction['prediction_seconds'] < 7200:
-                                st.write("💪 Strong performance! Consider interval training.")
+                                st.write("💪 Świetna forma! Rozważ trening interwałowy.")
                             else:
-                                st.write("🎯 Great goal! Focus on building endurance.")
+                                st.write("🎯 Dobry cel! Skup się na budowaniu wytrzymałości.")
                         
-                        # Save to history
+                        # Zapisz do historii
                         st.session_state.prediction_history.append({
                             'timestamp': datetime.now(),
                             'input': user_input,
@@ -262,7 +266,7 @@ if predict_button:
                             'data': extracted_data
                         })
                         
-                        # Langfuse tracking for prediction
+                        # Tracking w Langfuse
                         langfuse.trace(
                             name="halfmarathon_prediction",
                             input=extracted_data,
@@ -274,13 +278,13 @@ if predict_button:
                         )
                         
                     else:
-                        st.error(f"❌ Prediction error: {prediction.get('error', 'Unknown error')}")
+                        st.error(f"❌ Błąd predykcji: {prediction.get('error', 'Nieznany błąd')}")
                         
             except Exception as e:
-                st.error(f"❌ An error occurred: {str(e)}")
-                st.info("Please try again with different information.")
+                st.error(f"❌ Wystąpił błąd: {str(e)}")
+                st.info("Proszę spróbować ponownie z innymi danymi.")
                 
-                # Track error in Langfuse
+                # Trackuj błąd w Langfuse
                 langfuse.trace(
                     name="halfmarathon_prediction_error",
                     input={"user_input": user_input},
@@ -288,11 +292,11 @@ if predict_button:
                     metadata={"success": False}
                 )
 
-# Footer
+# Stopka
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; padding: 2rem;">
-    <p>🏃 Half Marathon Predictor v2.0 | Powered by XGBoost & OpenAI</p>
-    <p>Trained on 20,000+ race results | Monitored with Langfuse</p>
+    <p>🏃 Predyktor Półmaratonu v2.0 | Zasilany przez XGBoost & OpenAI</p>
+    <p>Wytrenowany na 20 000+ wynikach zawodów | Monitorowany przez Langfuse</p>
 </div>
 """, unsafe_allow_html=True)

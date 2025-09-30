@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import math
 import pickle
+import pandas as pd
 from typing import Optional, Dict, Any
 
 def _try_load_model(path: str):
@@ -50,6 +51,7 @@ class HalfMarathonPredictor:
     
     def __init__(self):
         self.model = None
+        self.feature_order = None  # ← NOWE: zapamiętaj kolejność features
         self.model_metadata = {
             "name": "HalfMarathonPredictor",
             "version": "1.0",
@@ -58,16 +60,27 @@ class HalfMarathonPredictor:
         
         # 1. Próba załadowania lokalnego modelu
         model_path = os.getenv("MODEL_PATH", "model_cache/halfmarathon_model_latest.pkl")
+        metadata_path = model_path.replace('.pkl', '_metadata.pkl')
         
         if os.path.isfile(model_path):
             m = _try_load_model(model_path)
             if m is not None:
                 self.model = m
+                
+                # ← NOWE: Załaduj metadata jeśli istnieje
+                if os.path.isfile(metadata_path):
+                    meta = _try_load_model(metadata_path)
+                    if meta and isinstance(meta, dict):
+                        self.model_metadata.update(meta)
+                        self.feature_order = meta.get('features')  # ← Zapisana kolejność
+                
                 self.model_metadata.update({
                     "version": "ml-local",
                     "source": model_path
                 })
                 print(f"✅ Model załadowany lokalnie: {model_path}")
+                if self.feature_order:
+                    print(f"   Features: {self.feature_order}")
                 return
         
         # 2. Próba pobrania z Digital Ocean Spaces
@@ -79,7 +92,9 @@ class HalfMarathonPredictor:
         if bucket and access_key and secret_key:
             endpoint = f"https://{region}.digitaloceanspaces.com"
             model_key = "models/halfmarathon_model_latest.pkl"
+            metadata_key = "models/model_metadata_latest.pkl"
             cache_path = "model_cache/halfmarathon_model_latest.pkl"
+            cache_meta_path = "model_cache/model_metadata_latest.pkl"
             
             ok = _download_from_spaces(
                 bucket=bucket,
@@ -90,15 +105,35 @@ class HalfMarathonPredictor:
                 secret_key=secret_key
             )
             
+            # ← NOWE: Pobierz też metadata
+            _download_from_spaces(
+                bucket=bucket,
+                key=metadata_key,
+                dest_path=cache_meta_path,
+                endpoint=endpoint,
+                access_key=access_key,
+                secret_key=secret_key
+            )
+            
             if ok and os.path.isfile(cache_path):
                 m = _try_load_model(cache_path)
                 if m is not None:
                     self.model = m
+                    
+                    # Załaduj metadata
+                    if os.path.isfile(cache_meta_path):
+                        meta = _try_load_model(cache_meta_path)
+                        if meta and isinstance(meta, dict):
+                            self.model_metadata.update(meta)
+                            self.feature_order = meta.get('features')
+                    
                     self.model_metadata.update({
                         "version": "ml-spaces",
                         "source": f"s3://{bucket}/{model_key}"
                     })
                     print(f"✅ Model załadowany z Spaces")
+                    if self.feature_order:
+                        print(f"   Features: {self.feature_order}")
                     return
         
         # 3. Fallback - algorytm heurystyczny
@@ -124,6 +159,7 @@ class HalfMarathonPredictor:
                 'minutes': int,
                 'seconds': int,
                 'average_pace_min_per_km': float,
+                'confidence': str,  # ← NOWE
                 'details': {...}
             }
         """
@@ -135,7 +171,8 @@ class HalfMarathonPredictor:
         if gender not in {"male", "female"}:
             return {
                 "success": False,
-                "error": "Brak lub niepoprawna płeć. Wymagane: 'male' lub 'female'."
+                "error": "Brak lub niepoprawna płeć. Wymagane: 'male' lub 'female'.",
+                "hint": "Podaj płeć: M/K, mężczyzna/kobieta, male/female"
             }
         
         try:
@@ -143,7 +180,8 @@ class HalfMarathonPredictor:
         except:
             return {
                 "success": False,
-                "error": "Brak lub niepoprawny wiek. Wymagana liczba całkowita."
+                "error": "Brak lub niepoprawny wiek. Wymagana liczba całkowita.",
+                "hint": "Podaj wiek: liczba od 15 do 90 lat"
             }
         
         try:
@@ -151,7 +189,8 @@ class HalfMarathonPredictor:
         except:
             return {
                 "success": False,
-                "error": "Brak lub niepoprawny czas 5km. Wymagana liczba sekund (int)."
+                "error": "Brak lub niepoprawny czas 5km. Wymagana liczba sekund (int).",
+                "hint": "Podaj czas 5km w formacie MM:SS (np. 24:30)"
             }
         
         # Walidacja zakresów
@@ -172,33 +211,45 @@ class HalfMarathonPredictor:
             try:
                 pred = self._predict_ml(t5, age, gender)
                 if pred and math.isfinite(pred) and pred > 0:
-                    return self._format_prediction(pred, mode="ml")
+                    return self._format_prediction(pred, mode="ml", confidence="high")
             except Exception as e:
                 print(f"⚠️ Błąd predykcji ML: {e}, przełączam na fallback")
         
         # Fallback heurystyczny
         pred = self._predict_fallback(t5, age, gender)
-        return self._format_prediction(pred, mode="fallback")
+        return self._format_prediction(pred, mode="fallback", confidence="medium")
     
     def _predict_ml(self, t5: int, age: int, gender: str) -> float:
-        """Predykcja za pomocą modelu ML"""
+        """Predykcja za pomocą modelu ML - ULEPSZONA z feature_order"""
         gender_encoded = 1 if gender == "male" else 0
+        pace_5k = t5 / 5
         
-        # Podstawowe features (dostosuj do swojego modelu)
-        pace_5k = t5 / 5  # tempo w sekundach na km
+        # ← NOWE: Użyj feature_order jeśli dostępne
+        if self.feature_order:
+            # Przygotuj wszystkie możliwe features
+            feature_values = {
+                'Płeć_encoded': gender_encoded,
+                'Wiek': age,
+                '5 km Czas_seconds': t5,
+                '5 km Tempo': pace_5k,
+                '10 km Tempo': pace_5k * 1.05,  # Estymacja
+                '15 km Tempo': pace_5k * 1.08,  # Estymacja
+                'Tempo Stabilność': 0.03  # Średnia wartość
+            }
+            
+            # Utwórz DataFrame z dokładną kolejnością features
+            X = pd.DataFrame([{feat: feature_values.get(feat, 0) for feat in self.feature_order}])
+            return float(self.model.predict(X)[0])
         
-        # Próba z różnymi układami cech
+        # Fallback do starej logiki (próba różnych kombinacji)
         try:
-            # Wariant 1: podstawowe cechy
             X = [[gender_encoded, age, t5, pace_5k]]
             return float(self.model.predict(X)[0])
         except:
             try:
-                # Wariant 2: tylko podstawowe
                 X = [[gender_encoded, age, t5]]
                 return float(self.model.predict(X)[0])
             except:
-                # Jeśli nic nie działa, zwróć None
                 return None
     
     def _predict_fallback(self, t5: int, age: int, gender: str) -> int:
@@ -215,24 +266,24 @@ class HalfMarathonPredictor:
         
         # Korekta wieku
         if age < 20:
-            base *= 1 + 0.005 * (20 - age)  # młodsi mogą być wolniejsi
+            base *= 1 + 0.005 * (20 - age)
         elif 20 <= age <= 35:
             pass  # peak performance
         elif 36 <= age <= 50:
-            base *= 1 + 0.003 * (age - 35)  # +0.3% na rok
+            base *= 1 + 0.003 * (age - 35)
         elif 51 <= age <= 65:
-            base *= 1 + 0.003 * 15 + 0.005 * (age - 50)  # +0.5% na rok
+            base *= 1 + 0.003 * 15 + 0.005 * (age - 50)
         else:  # > 65
-            base *= 1 + 0.003 * 15 + 0.005 * 15 + 0.01 * (age - 65)  # +1% na rok
+            base *= 1 + 0.003 * 15 + 0.005 * 15 + 0.01 * (age - 65)
         
         # Ograniczenia
-        base = max(base, 60 * 60)      # min 1h
-        base = min(base, 4 * 60 * 60)  # max 4h
+        base = max(base, 60 * 60)
+        base = min(base, 4 * 60 * 60)
         
         return int(round(base))
     
-    def _format_prediction(self, total_seconds: int, mode: str) -> Dict[str, Any]:
-        """Formatowanie wyniku predykcji"""
+    def _format_prediction(self, total_seconds: int, mode: str, confidence: str = "medium") -> Dict[str, Any]:
+        """Formatowanie wyniku predykcji - ROZSZERZONE"""
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
@@ -242,6 +293,13 @@ class HalfMarathonPredictor:
         avg_pace_sec_per_km = total_seconds / half_marathon_km
         avg_pace_min_per_km = avg_pace_sec_per_km / 60
         
+        # ← NOWE: Confidence score
+        confidence_text = {
+            "high": "Wysoka (model ML)",
+            "medium": "Średnia (heurystyka)",
+            "low": "Niska (brak danych)"
+        }
+        
         return {
             "success": True,
             "prediction_seconds": total_seconds,
@@ -250,9 +308,11 @@ class HalfMarathonPredictor:
             "minutes": minutes,
             "seconds": seconds,
             "average_pace_min_per_km": round(avg_pace_min_per_km, 2),
+            "confidence": confidence_text.get(confidence, "medium"),  # ← NOWE
             "details": {
                 "mode": mode,
                 "model_version": self.model_metadata.get("version"),
-                "model_source": self.model_metadata.get("source")
+                "model_source": self.model_metadata.get("source"),
+                "features_used": self.feature_order if self.feature_order else "basic"  # ← NOWE
             }
         }

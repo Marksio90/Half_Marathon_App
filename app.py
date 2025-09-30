@@ -1,18 +1,13 @@
 import os
-import sys
 import logging
 
-# --- Ustawienia Streamlit wg zmiennych środowiskowych platformy ---
-# Jeśli platforma (DO, Render, Railway itd.) ustawia $PORT, użyj go zawsze.
-port = os.getenv("PORT")
-if port:
-    os.environ.setdefault("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
-    os.environ.setdefault("STREAMLIT_SERVER_PORT", port)
-else:
-    # lokalnie zostaw domyślne (8501) lub wymuś własne:
-    os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
+# --- Ustawienia Streamlit ---
+# Jeśli platforma ustawi PORT, użyj go; jeśli nie, użyj 8080, zawsze 0.0.0.0
+port = os.getenv("PORT", "8080")
+os.environ["STREAMLIT_SERVER_ADDRESS"] = "0.0.0.0"
+os.environ["STREAMLIT_SERVER_PORT"] = port
+os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
 
-# --- Logging ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -24,14 +19,13 @@ logger.info(
     os.environ.get("STREAMLIT_SERVER_ADDRESS"),
 )
 
-# --- Załaduj .env tylko lokalnie ---
+# Załaduj .env tylko lokalnie
 if os.path.exists(".env"):
     from dotenv import load_dotenv
     load_dotenv()
 
 import streamlit as st
 from datetime import datetime
-
 
 # KRYTYCZNE: Cache'uj importy modułów
 @st.cache_resource

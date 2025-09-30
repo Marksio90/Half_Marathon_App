@@ -25,16 +25,18 @@ COPY .streamlit/config.toml .streamlit/config.toml
 # Expose port
 EXPOSE 8080
 
-# Health check that waits for app to be ready
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+# Health check - zwiększony start period i timeout
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=5 \
     CMD curl --fail http://localhost:8080/_stcore/health || exit 1
 
-# Run with proper flags - CRITICAL: use exec form for proper signal handling
+# KRYTYCZNA ZMIANA: Użyj exec form + dodaj --server.runOnSave=false
 CMD ["streamlit", "run", "app.py", \
      "--server.port=8080", \
      "--server.address=0.0.0.0", \
      "--server.headless=true", \
      "--server.enableCORS=false", \
      "--server.enableXsrfProtection=false", \
+     "--server.runOnSave=false", \
      "--browser.serverAddress=0.0.0.0", \
-     "--browser.gatherUsageStats=false"]
+     "--browser.gatherUsageStats=false", \
+     "--logger.level=info"]

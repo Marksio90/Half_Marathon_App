@@ -42,19 +42,23 @@ def _download_from_spaces(
     access_key: str,
     secret_key: str,
 ) -> bool:
-    """Pobieranie modelu z Digital Ocean Spaces"""
+    """Pobieranie modelu z DigitalOcean Spaces (S3-compatible)"""
     try:
+        from botocore.config import Config
         import boto3
 
         s3 = boto3.client(
             "s3",
+            region_name=os.getenv("DO_SPACES_REGION", "fra1"),
             endpoint_url=endpoint,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
         )
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        # UWAGA: klucz musi istnieć, a token mieć uprawnienia GetObject do tego klucza
         s3.download_file(bucket, key, dest_path)
-        print(f"✅ Model pobrany z Spaces: {key}")
+        print(f"✅ Model pobrany z Spaces: s3://{bucket}/{key}")
         return True
     except Exception as e:
         print(f"⚠️ Nie udało się pobrać modelu z Spaces: {e}")

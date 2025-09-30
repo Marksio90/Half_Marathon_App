@@ -1,8 +1,9 @@
 from __future__ import annotations
 import os, json, re
 from typing import Optional, Dict, Any
+from functools import lru_cache
 
-# OpenAI SDK - FIX dla proxy issue
+# OpenAI SDK
 from openai import OpenAI
 
 # Langfuse fallback
@@ -30,8 +31,6 @@ def _get_openai_client() -> OpenAI:
         if not api_key:
             raise RuntimeError("Brak OPENAI_API_KEY w środowisku.")
         
-        # FIX: Usuń proxy z environment variables jeśli istnieje
-        # Problem: niektóre systemy mają proxy settings które konfliktują
         try:
             _client = OpenAI(
                 api_key=api_key,
@@ -39,7 +38,6 @@ def _get_openai_client() -> OpenAI:
                 max_retries=2
             )
         except TypeError as e:
-            # Fallback dla starszych wersji
             if 'proxies' in str(e):
                 _client = OpenAI(api_key=api_key)
             else:
@@ -60,11 +58,9 @@ def parse_time_to_seconds(time_str: str) -> Optional[int]:
         m_or_s = int(time_match.group(2))
         s_val = int(time_match.group(3)) if time_match.group(3) else 0
         
-        # Jeśli jest trzecia grupa (sekundy), to h:m:s
         if time_match.group(3):
             return h_or_m * 3600 + m_or_s * 60 + s_val
         else:
-            # Inaczej MM:SS
             return h_or_m * 60 + m_or_s
     
     # Format słowny: "27 minut", "23 min 45 s"
@@ -80,9 +76,9 @@ def parse_time_to_seconds(time_str: str) -> Optional[int]:
     try:
         val = float(re.sub(r'[^\d.]', '', s))
         if val < 100:
-            return int(val * 60)  # Zakładamy minuty
+            return int(val * 60)
         else:
-            return int(val)  # Zakładamy sekundy
+            return int(val)
     except:
         return None
 
@@ -93,17 +89,17 @@ def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
         "gender": None, "age": None, "time_5km_seconds": None
     }
     
-    # Płeć - ulepszone wzorce
+    # Płeć
     if re.search(r'\b(male|mężczyzn|męsk|facet|chłopak|man)\b', t):
         out["gender"] = "male"
     elif re.search(r'\b(female|kobiet|żeńsk|dziewczyn|woman)\b', t):
         out["gender"] = "female"
-    elif re.search(r'\bm\b', t) and 'mam' not in t:  # M ale nie "mam"
+    elif re.search(r'\bm\b', t) and 'mam' not in t:
         out["gender"] = "male"
     elif re.search(r'\bk\b', t):
         out["gender"] = "female"
     
-    # Wiek - różne formaty
+    # Wiek
     age_patterns = [
         r'(\d{1,2})\s*(?:-\s*)?(?:letni|letnia|lat|lata|roku|years?\s*old|yo|y/o)',
         r'age[:\s]*(\d{1,2})',
@@ -121,12 +117,11 @@ def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
             except:
                 pass
     
-    # Czas 5km - PRIORYTET dla MM:SS format
-    # Szukaj wzorców z "5km" lub "5k"
+    # Czas 5km
     time_5k_patterns = [
-        r'5\s*k(?:m)?\s*[:\-]?\s*(\d{1,2}):([0-5]\d)',  # "5km 24:30" lub "5k: 24:30"
-        r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2}):([0-5]\d)',  # "5km w 24:30"
-        r'(\d{1,2}):([0-5]\d)\s*(?:na|for)?\s*5\s*k',  # "24:30 na 5km"
+        r'5\s*k(?:m)?\s*[:\-]?\s*(\d{1,2}):([0-5]\d)',
+        r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2}):([0-5]\d)',
+        r'(\d{1,2}):([0-5]\d)\s*(?:na|for)?\s*5\s*k',
     ]
     
     for pat in time_5k_patterns:
@@ -139,9 +134,7 @@ def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
                 out["time_5km_seconds"] = total
                 break
     
-    # Jeśli nie znaleziono, szukaj formatu słownego
     if not out["time_5km_seconds"]:
-        # "5km w 27 minut", "5k 24 min"
         m = re.search(r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2})\s*(?:minut|min)', t)
         if m:
             minutes = int(m.group(1))
@@ -151,9 +144,12 @@ def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
     
     return out
 
-@observe(name="llm_data_extraction")
-def extract_user_data(text: str) -> Dict[str, Optional[int | str]]:
-    """LLM-based ekstrakcja danych z walidacją."""
+# ← NOWE: Cache dla LLM (zmniejsza koszty przy powtórkach)
+@lru_cache(maxsize=100)
+def _cached_llm_call(text: str, model: str) -> str:
+    """Cached LLM call - zapobiega powtórnym wywołaniom dla tego samego tekstu"""
+    client = _get_openai_client()
+    
     system_prompt = """Jesteś asystentem do ekstrakcji danych dla predyktora czasu półmaratonu.
 
 Wydobądź następujące informacje z tekstu użytkownika:
@@ -175,7 +171,22 @@ Output: {"gender": "male", "age": 30, "time_5km_seconds": 1470}
 
 Input: "Kobieta 28 lat, 5k w 27 minut"
 Output: {"gender": "female", "age": 28, "time_5km_seconds": 1620}"""
+    
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ],
+        temperature=0.1,
+        max_tokens=150
+    )
+    
+    return resp.choices[0].message.content or ""
 
+@observe(name="llm_data_extraction")
+def extract_user_data(text: str) -> Dict[str, Optional[int | str]]:
+    """LLM-based ekstrakcja danych z walidacją - ULEPSZONA z cache"""
     out = {"gender": None, "age": None, "time_5km_seconds": None}
     
     try:
@@ -187,18 +198,9 @@ Output: {"gender": "female", "age": 28, "time_5km_seconds": 1620}"""
         except:
             pass
         
-        client = _get_openai_client()
-        resp = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text}
-            ],
-            temperature=0.1,
-            max_tokens=150
-        )
-        
-        response_text = (resp.choices[0].message.content or "").strip()
+        # ← NOWE: Użyj cached call
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        response_text = _cached_llm_call(text, model)
         
         # Wyciągnij JSON
         m = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -234,13 +236,12 @@ Output: {"gender": "female", "age": 28, "time_5km_seconds": 1620}"""
         
         # Logowanie do Langfuse
         try:
-            used_tokens = getattr(resp.usage, "total_tokens", None)
             langfuse_context.update_current_observation(
                 output=out,
                 metadata={
-                    "tokens_used": used_tokens,
-                    "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                    "success": all(out.values())
+                    "model": model,
+                    "success": all(out.values()),
+                    "cached": True  # ← Info że używamy cache
                 }
             )
         except:
@@ -281,3 +282,9 @@ def extract_user_data_auto(text: str) -> Dict[str, Optional[int | str]]:
     }
     
     return result
+
+# ← NOWE: Funkcja do czyszczenia cache (użyj w maintenance)
+def clear_llm_cache():
+    """Wyczyść cache LLM - użyj jeśli model się zmienił"""
+    _cached_llm_call.cache_clear()
+    print("✅ LLM cache wyczyszczony")

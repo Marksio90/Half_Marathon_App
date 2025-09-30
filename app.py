@@ -2,26 +2,30 @@ import os
 import sys
 import logging
 
-# --- Detekcja środowiska DO / Railway ---
-if os.path.exists('/.dockerenv') or os.getenv('RAILWAY_ENVIRONMENT'):
-    os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
-    os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
-    os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
+# --- Ustawienia Streamlit wg zmiennych środowiskowych platformy ---
+# Jeśli platforma (DO, Render, Railway itd.) ustawia $PORT, użyj go zawsze.
+port = os.getenv("PORT")
+if port:
+    os.environ.setdefault("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
+    os.environ.setdefault("STREAMLIT_SERVER_PORT", port)
+else:
+    # lokalnie zostaw domyślne (8501) lub wymuś własne:
+    os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
 
-# --- Logging configuration (added by patch) ---
+# --- Logging ---
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger('halfmarathon')
+logger = logging.getLogger("halfmarathon")
 logger.info(
     "Using STREAMLIT port=%s address=%s",
-    os.environ.get('STREAMLIT_SERVER_PORT'),
-    os.environ.get('STREAMLIT_SERVER_ADDRESS'),
+    os.environ.get("STREAMLIT_SERVER_PORT"),
+    os.environ.get("STREAMLIT_SERVER_ADDRESS"),
 )
 
-# --- Załaduj zmienne środowiskowe z .env (tylko lokalnie) ---
-if os.path.exists('.env'):
+# --- Załaduj .env tylko lokalnie ---
+if os.path.exists(".env"):
     from dotenv import load_dotenv
     load_dotenv()
 

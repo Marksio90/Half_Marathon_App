@@ -1,24 +1,15 @@
-import os
-import logging
-
-# --- Ustawienia Streamlit ---
-# Jeśli platforma ustawi PORT, użyj go; jeśli nie, użyj 8080, zawsze 0.0.0.0
+import os, logging
 port = os.getenv("PORT", "8080")
 os.environ["STREAMLIT_SERVER_ADDRESS"] = "0.0.0.0"
 os.environ["STREAMLIT_SERVER_PORT"] = port
 os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-logger = logging.getLogger("halfmarathon")
-logger.info(
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("halfmarathon").info(
     "Using STREAMLIT port=%s address=%s",
     os.environ.get("STREAMLIT_SERVER_PORT"),
     os.environ.get("STREAMLIT_SERVER_ADDRESS"),
 )
-
 # Załaduj .env tylko lokalnie
 if os.path.exists(".env"):
     from dotenv import load_dotenv

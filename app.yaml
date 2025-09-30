@@ -13,7 +13,7 @@ services:
   http_port: 8080
   
   instance_count: 1
-  instance_size_slug: basic-xs  # ← ZWIĘKSZONE z basic-xxs (512MB → 1GB RAM)
+  instance_size_slug: basic-xs  # 1GB RAM (zwiększone z basic-xxs)
   
   envs:
   # Digital Ocean Spaces (WYMAGANE)
@@ -51,8 +51,16 @@ services:
   
   health_check:
     http_path: /_stcore/health
-    initial_delay_seconds: 120  # ← ZWIĘKSZONE z 60
-    period_seconds: 15           # ← ZWIĘKSZONE z 10
-    timeout_seconds: 10          # ← ZWIĘKSZONE z 5
+    initial_delay_seconds: 120
+    period_seconds: 30  # ← ZWIĘKSZONE z 15 (rzadsze sprawdzanie)
+    timeout_seconds: 10
     success_threshold: 1
-    failure_threshold: 5         # ← ZWIĘKSZONE z 3
+    failure_threshold: 5
+  
+  # ← NOWE: Autoscaling (opcjonalne)
+  # autoscaling:
+  #   min_instance_count: 1
+  #   max_instance_count: 3
+  #   metrics:
+  #     cpu:
+  #       percent: 80

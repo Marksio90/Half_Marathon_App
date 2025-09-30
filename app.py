@@ -1,20 +1,12 @@
-# app.py - ENHANCED VERSION (FIXED)
 import os
 import sys
 import logging
 
+# --- Detekcja środowiska DO / Railway ---
 if os.path.exists('/.dockerenv') or os.getenv('RAILWAY_ENVIRONMENT'):
-os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
-os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
-logger.info("Using STREAMLIT port=%s address=%s", os.environ.get('STREAMLIT_SERVER_PORT'), os.environ.get('STREAMLIT_SERVER_ADDRESS'))
-os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
-
-# Załaduj zmienne środowowiskowe z .env (tylko jeśli lokalnie)
-if os.path.exists('.env'):
-    from dotenv import load_dotenv
-    load_dotenv()
-
-import streamlit as st
+    os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
+    os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
+    os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
 
 # --- Logging configuration (added by patch) ---
 logging.basicConfig(
@@ -22,7 +14,20 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
 )
 logger = logging.getLogger('halfmarathon')
+logger.info(
+    "Using STREAMLIT port=%s address=%s",
+    os.environ.get('STREAMLIT_SERVER_PORT'),
+    os.environ.get('STREAMLIT_SERVER_ADDRESS'),
+)
+
+# --- Załaduj zmienne środowiskowe z .env (tylko lokalnie) ---
+if os.path.exists('.env'):
+    from dotenv import load_dotenv
+    load_dotenv()
+
+import streamlit as st
 from datetime import datetime
+
 
 # KRYTYCZNE: Cache'uj importy modułów
 @st.cache_resource

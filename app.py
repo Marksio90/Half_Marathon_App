@@ -1,19 +1,52 @@
-# Załaduj zmienne środowowiskowe NA POCZĄTKU
-from dotenv import load_dotenv
-load_dotenv()
+# app.py - FIXED VERSION
+import os
+import sys
+
+# KRYTYCZNE: Ustaw zmienne środowiskowe PRZED jakimkolwiek importem Streamlit
+os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
+os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
+os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
+
+# Załaduj zmienne środowowiskowe z .env (tylko jeśli lokalnie)
+if os.path.exists('.env'):
+    from dotenv import load_dotenv
+    load_dotenv()
 
 import streamlit as st
-import pandas as pd
-import os
 from datetime import datetime
 
-# Używamy automatycznego ekstraktora (regex ➜ LLM)
-from utils.llm_extractor import extract_user_data_auto
-from utils.model_predictor import HalfMarathonPredictor
+# KRYTYCZNE: Cache'uj importy modułów
+@st.cache_resource
+def get_predictor():
+    """Inicjalizacja predyktora - tylko raz"""
+    from utils.model_predictor import HalfMarathonPredictor
+    return HalfMarathonPredictor()
 
-# ✅ Langfuse shim (no-op jeśli brak)
-from utils.langfuse_shim import observe, langfuse_context, langfuse
+@st.cache_resource
+def get_extractor():
+    """Import ekstraktora - tylko raz"""
+    from utils.llm_extractor import extract_user_data_auto
+    return extract_user_data_auto
 
+# Langfuse shim - bezpieczny import
+try:
+    from utils.langfuse_shim import observe, langfuse_context, langfuse
+except Exception:
+    # Fallback jeśli brak langfuse
+    def observe(name=None):
+        def decorator(func):
+            return func
+        return decorator
+    
+    class DummyContext:
+        @staticmethod
+        def update_current_trace(**kwargs):
+            pass
+    
+    langfuse_context = DummyContext()
+    langfuse = None
+
+# Konfiguracja strony
 st.set_page_config(
     page_title="Predykcja Czasu Półmaratonu",
     page_icon="🏃",
@@ -21,9 +54,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Session state initialization
 if 'prediction_history' not in st.session_state:
     st.session_state.prediction_history = []
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
 
+# CSS Styles
 st.markdown("""
     <style>
     .main-header {font-size:3rem;font-weight:bold;text-align:center;color:#1E88E5;margin-bottom:1rem;}
@@ -36,9 +73,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Header
 st.markdown('<div class="main-header">🏃 Predyktor Czasu Półmaratonu</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Przewidź swój czas ukończenia półmaratonu używając AI i uczenia maszynowego</div>', unsafe_allow_html=True)
 
+# Sidebar
 with st.sidebar:
     st.header("📊 O aplikacji")
     st.info("""
@@ -48,15 +87,18 @@ with st.sidebar:
     - Najlepszego czasu na 5km
     """)
     st.header("🎯 Jak używać")
-    st.markdown("Wpisz dane w jednym zdaniu, np.: **„M 30 lat, 5 km 24:30”**.")
+    st.markdown("Wpisz dane w jednym zdaniu, np.: **„M 30 lat, 5 km 24:30"**.")
     st.header("📈 Wydajność modelu")
     st.metric("Średni błąd bezwzględny", "~4,5 minuty")
     st.metric("Wynik R²", "0,92")
+    
     if st.session_state.prediction_history:
         st.header("📜 Historia")
         st.write(f"Wykonanych predykcji: {len(st.session_state.prediction_history)}")
 
+# Main content
 col1, col2 = st.columns([2, 1])
+
 with col1:
     st.header("📝 Powiedz nam o sobie")
     with st.expander("💡 Przykładowe dane (kliknij aby zobaczyć)"):
@@ -65,11 +107,13 @@ with col1:
             'Kobieta 28 lat, 5km w 27 minut\n'
             'Mężczyzna 45 lat, rekord na 5km: 22:30'
         )
+    
     user_input = st.text_area(
         "Opisz siebie:",
         placeholder="np. M 30 lat, 5 km 24:30",
         height=120
     )
+    
     predict_button = st.button("🚀 Przewiduj Mój Czas", type="primary")
 
 with col2:
@@ -84,69 +128,61 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
+# Prediction logic
 if predict_button:
     if not user_input.strip():
         st.error("❌ Proszę wprowadzić informacje o sobie!")
     else:
         with st.spinner("🤖 Analizuję Twoje dane..."):
             try:
+                # Get cached functions
+                extract_user_data_auto = get_extractor()
+                predictor = get_predictor()
+                
+                # Extract data
                 @observe(name="user_data_extraction_auto")
                 def do_extract(text):
                     try:
-                        langfuse_context.update_current_trace(
-                            user_id=f"user_{datetime.now().timestamp()}",
-                            metadata={"input_length": len(text)}
-                        )
+                        if langfuse_context:
+                            langfuse_context.update_current_trace(
+                                user_id=f"user_{datetime.now().timestamp()}",
+                                metadata={"input_length": len(text)}
+                            )
                     except Exception:
                         pass
                     return extract_user_data_auto(text)
 
                 extracted_data = do_extract(user_input)
 
-                # Wymagane: wszystko musi być wyłuskane automatycznie
+                # Validate extraction
                 if not all([
                     extracted_data.get('gender'),
                     extracted_data.get('age'),
                     extracted_data.get('time_5km_seconds')
                 ]):
                     st.error("⛔ Nie udało się automatycznie wyodrębnić wszystkich danych. "
-                             "Podaj je w jednym zdaniu, np.: **„M 30 lat, 5 km 24:30”**.")
+                             "Podaj je w jednym zdaniu, np.: **„M 30 lat, 5 km 24:30"**.")
                     st.stop()
 
-                # Inicjalizacja i predykcja
-                try:
-                    predictor = HalfMarathonPredictor()
-                except Exception as e:
-                    st.error("❌ Nie udało się zainicjalizować predyktora (modelu).")
-                    st.info("Ustaw MODEL_PATH (lokalny .joblib) lub konfigurację Spaces.")
-                    st.code(f"MODEL_PATH={os.getenv('MODEL_PATH', '(brak)')}")
-                    try:
-                        langfuse.trace(
-                            name="halfmarathon_model_init_error",
-                            input={"user_input": user_input},
-                            output={"error": str(e)},
-                            metadata={"success": False}
-                        )
-                    except Exception:
-                        pass
-                    st.stop()
-
+                # Predict
                 try:
                     prediction = predictor.predict(extracted_data)
                 except Exception as e:
                     st.error(f"❌ Błąd podczas predykcji: {e}")
-                    try:
-                        langfuse.trace(
-                            name="halfmarathon_prediction_runtime_error",
-                            input=extracted_data,
-                            output={"error": str(e)},
-                            metadata={"success": False}
-                        )
-                    except Exception:
-                        pass
+                    if langfuse:
+                        try:
+                            langfuse.trace(
+                                name="halfmarathon_prediction_runtime_error",
+                                input=extracted_data,
+                                output={"error": str(e)},
+                                metadata={"success": False}
+                            )
+                        except Exception:
+                            pass
                     st.stop()
 
                 if prediction.get('success'):
+                    # Display prediction
                     st.markdown(f"""
                     <div class="prediction-box">
                         <h2>🎯 Twój Przewidywany Czas Półmaratonu</h2>
@@ -156,6 +192,8 @@ if predict_button:
                     """, unsafe_allow_html=True)
 
                     st.success("✅ Dane rozpoznane automatycznie!")
+                    
+                    # Display extracted data
                     col_a, col_b, col_c = st.columns(3)
                     with col_a:
                         st.metric("Płeć", "Mężczyzna" if extracted_data['gender'] == 'male' else "Kobieta")
@@ -165,14 +203,17 @@ if predict_button:
                         t5 = extracted_data['time_5km_seconds']
                         st.metric("Czas 5km", f"{t5//60}:{t5%60:02d}")
 
+                    # Performance analysis
                     st.header("📊 Analiza wydajności")
                     col_x, col_y = st.columns(2)
+                    
                     with col_x:
                         st.markdown('<div class="info-box"><h4>📈 Informacje o tempie</h4></div>', unsafe_allow_html=True)
                         avg_pace = prediction['prediction_seconds'] / 21.0975
                         st.write(f"**Średnie tempo**: {int(avg_pace//60)}:{int(avg_pace%60):02d} min/km")
                         pace_5k = t5 / 5
                         st.write(f"**Tempo na 5km**: {int(pace_5k//60)}:{int(pace_5k%60):02d} min/km")
+                    
                     with col_y:
                         st.markdown('<div class="info-box"><h4>💪 Wskazówki treningowe</h4></div>', unsafe_allow_html=True)
                         if prediction['prediction_seconds'] < 5400:
@@ -182,36 +223,42 @@ if predict_button:
                         else:
                             st.write("🎯 Dobry cel! Skup się na budowaniu wytrzymałości.")
 
+                    # Save to history
                     st.session_state.prediction_history.append({
                         'timestamp': datetime.now(),
                         'input': user_input,
                         'prediction': prediction['formatted_time'],
                         'data': extracted_data
                     })
-                    try:
-                        langfuse.trace(
-                            name="halfmarathon_prediction_auto",
-                            input=extracted_data,
-                            output=prediction,
-                            metadata={"mode": "auto", "success": True}
-                        )
-                    except Exception:
-                        pass
+                    
+                    # Log to Langfuse
+                    if langfuse:
+                        try:
+                            langfuse.trace(
+                                name="halfmarathon_prediction_auto",
+                                input=extracted_data,
+                                output=prediction,
+                                metadata={"mode": "auto", "success": True}
+                            )
+                        except Exception:
+                            pass
                 else:
                     st.error(f"❌ Błąd predykcji: {prediction.get('error', 'Nieznany błąd')}")
 
             except Exception as e:
                 st.error(f"❌ Wystąpił błąd: {e}")
-                try:
-                    langfuse.trace(
-                        name="halfmarathon_prediction_error",
-                        input={"user_input": user_input},
-                        output={"error": str(e)},
-                        metadata={"success": False}
-                    )
-                except Exception:
-                    pass
+                if langfuse:
+                    try:
+                        langfuse.trace(
+                            name="halfmarathon_prediction_error",
+                            input={"user_input": user_input},
+                            output={"error": str(e)},
+                            metadata={"success": False}
+                        )
+                    except Exception:
+                        pass
 
+# Footer - ZAWSZE WIDOCZNY (poza blokiem if)
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; padding: 2rem;">

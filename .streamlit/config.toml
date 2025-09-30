@@ -6,10 +6,10 @@ textColor = "#262730"
 font = "sans serif"
 
 [server]
-# PRODUCTION CONFIG - zoptymalizowane dla Digital Ocean
+# LOCAL CONFIG - dla development na Windows/Mac/Linux
 headless = true
-address = "0.0.0.0"
-port = 8080
+address = "localhost"  # ← ZMIANA z 0.0.0.0 na localhost
+port = 8501              # ← ZMIANA z 8080 na 8501 (standardowy Streamlit)
 enableXsrfProtection = false
 enableCORS = false
 enableWebsocketCompression = true
@@ -17,16 +17,12 @@ runOnSave = false
 fileWatcherType = "none"
 maxUploadSize = 50
 
-# Health check endpoint
-baseUrlPath = ""
-
 [browser]
 gatherUsageStats = false
-serverAddress = "0.0.0.0"
-serverPort = 8080
+serverAddress = "localhost"  # ← ZMIANA
+serverPort = 8501            # ← ZMIANA
 
 [runner]
-# Prevent memory issues
 magicEnabled = false
 fastReruns = true
 enforceSerializableSessionState = false
@@ -36,6 +32,5 @@ level = "info"
 messageFormat = "%(asctime)s %(message)s"
 
 [client]
-# Timeout settings
 showErrorDetails = true
 toolbarMode = "minimal"

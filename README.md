@@ -228,6 +228,7 @@ Aplikacja akceptuje naturalny język (PL/EN):
 ✅ "Female runner, age 35, 5km: 25:15"
 ```
 
+
 ### API Usage (Programmatic)
 
 ```python

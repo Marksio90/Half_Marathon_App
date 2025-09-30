@@ -6,13 +6,16 @@ textColor = "#262730"
 font = "sans serif"
 
 [server]
-# PRODUCTION CONFIG - NIE ZMIENIAJ dla deploymentu
+# PRODUCTION CONFIG - zoptymalizowane dla Digital Ocean
 headless = true
 address = "0.0.0.0"
 port = 8080
 enableXsrfProtection = false
 enableCORS = false
 enableWebsocketCompression = true
+runOnSave = false
+fileWatcherType = "none"
+maxUploadSize = 50
 
 # Health check endpoint
 baseUrlPath = ""
@@ -26,6 +29,13 @@ serverPort = 8080
 # Prevent memory issues
 magicEnabled = false
 fastReruns = true
+enforceSerializableSessionState = false
 
 [logger]
 level = "info"
+messageFormat = "%(asctime)s %(message)s"
+
+[client]
+# Timeout settings
+showErrorDetails = true
+toolbarMode = "minimal"

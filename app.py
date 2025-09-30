@@ -1,11 +1,11 @@
-# app.py - ENHANCED VERSION
+# app.py - ENHANCED VERSION (FIXED)
 import os
 import sys
 
-# KRYTYCZNE: Ustaw zmienne środowiskowe PRZED jakimkolwiek importem Streamlit
-os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
-os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
-os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
+if os.path.exists('/.dockerenv') or os.getenv('RAILWAY_ENVIRONMENT'):
+    os.environ.setdefault('STREAMLIT_SERVER_HEADLESS', 'true')
+    os.environ.setdefault('STREAMLIT_SERVER_PORT', '8080')
+    os.environ.setdefault('STREAMLIT_SERVER_ADDRESS', '0.0.0.0')
 
 # Załaduj zmienne środowowiskowe z .env (tylko jeśli lokalnie)
 if os.path.exists('.env'):
@@ -58,7 +58,7 @@ if 'prediction_history' not in st.session_state:
     st.session_state.prediction_history = []
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
-# ← NOWE: Metryki
+# Metryki
 if 'metrics' not in st.session_state:
     st.session_state.metrics = {
         'total_predictions': 0,
@@ -97,13 +97,13 @@ with st.sidebar:
     """)
     
     st.header("🎯 Jak używać")
-    st.markdown("Wpisz dane w jednym zdaniu, np.: **„M 30 lat, 5 km 24:30"**.")
+    st.markdown('Wpisz dane w jednym zdaniu, np.: **"M 30 lat, 5 km 24:30"**.')
     
     st.header("📈 Wydajność modelu")
     st.metric("Średni błąd bezwzględny", "~4,5 minuty")
     st.metric("Wynik R²", "0,92")
     
-    # ← NOWE: Metryki użycia
+    # Metryki użycia
     if st.session_state.metrics['total_predictions'] > 0:
         st.header("📊 Statystyki")
         m = st.session_state.metrics
@@ -116,7 +116,7 @@ with st.sidebar:
             ml_pct = (m['ml_mode'] / m['total_predictions']) * 100 if m['total_predictions'] > 0 else 0
             st.metric("Model ML", f"{m['ml_mode']} ({ml_pct:.0f}%)")
     
-    # ← NOWE: Info o modelu
+    # Info o modelu
     if st.checkbox("🔧 Info o modelu"):
         predictor = get_predictor()
         st.json(predictor.model_metadata)
@@ -187,7 +187,7 @@ if predict_button:
 
                 extracted_data = do_extract(user_input)
                 
-                # ← NOWE: Sprawdź czy to był REGEX czy LLM
+                # Sprawdź czy to był REGEX czy LLM
                 from utils.llm_extractor import _preparse_quick
                 quick_result = _preparse_quick(user_input)
                 was_regex_only = all(quick_result.values())
@@ -197,7 +197,7 @@ if predict_button:
                 else:
                     st.session_state.metrics['llm_needed'] += 1
 
-                # ← NOWE: Pokaż co rozpoznano PRZED walidacją
+                # Pokaż co rozpoznano PRZED walidacją
                 with st.expander("🔍 Rozpoznane dane", expanded=False):
                     col_a, col_b, col_c = st.columns(3)
                     with col_a:
@@ -231,7 +231,7 @@ if predict_button:
                 ]):
                     st.error("⛔ Nie udało się automatycznie wyodrębnić wszystkich danych.")
                     
-                    # ← NOWE: Podpowiedzi co brakuje
+                    # Podpowiedzi co brakuje
                     missing = []
                     if not extracted_data.get('gender'):
                         missing.append("• **Płeć**: Podaj M/K, mężczyzna/kobieta, male/female")
@@ -244,7 +244,7 @@ if predict_button:
                     for m in missing:
                         st.markdown(m)
                     
-                    st.markdown("**Przykład poprawnego formatu:** *„M 30 lat, 5 km 24:30"*")
+                    st.markdown('**Przykład poprawnego formatu:** *"M 30 lat, 5 km 24:30"*')
                     st.stop()
 
                 # Predict
@@ -265,7 +265,7 @@ if predict_button:
                     st.stop()
 
                 if prediction.get('success'):
-                    # ← NOWE: Zlicz tryb predykcji
+                    # Zlicz tryb predykcji
                     st.session_state.metrics['total_predictions'] += 1
                     if prediction['details']['mode'] == 'ml':
                         st.session_state.metrics['ml_mode'] += 1
@@ -304,7 +304,7 @@ if predict_button:
                         pace_5k = t5 / 5
                         st.write(f"**Tempo na 5km**: {int(pace_5k//60)}:{int(pace_5k%60):02d} min/km")
                         
-                        # ← NOWE: Porównanie tempa
+                        # Porównanie tempa
                         pace_diff = avg_pace - pace_5k
                         if pace_diff > 30:  # >30s/km różnicy
                             st.warning(f"⚠️ Spodziewaj się spowolnienia o ~{int(pace_diff)}s/km na półmaratonie")
@@ -334,7 +334,7 @@ if predict_button:
                             st.write("• Skup się na regularności")
                             st.write("• Zwiększaj dystans o max 10% tygodniowo")
                     
-                    # ← NOWE: Dodatkowe detale o modelu
+                    # Dodatkowe detale o modelu
                     with st.expander("🔬 Szczegóły techniczne"):
                         st.write(f"**Tryb predykcji:** {prediction['details']['mode']}")
                         st.write(f"**Wersja modelu:** {prediction['details'].get('model_version', 'N/A')}")
@@ -352,7 +352,7 @@ if predict_button:
                         'confidence': prediction.get('confidence', 'N/A')
                     })
                     
-                    # ← NOWE: Opcja zapisu wyników
+                    # Opcja zapisu wyników
                     st.markdown("---")
                     col_save1, col_save2 = st.columns(2)
                     with col_save1:
@@ -430,7 +430,7 @@ Data: {datetime.now().strftime('%Y-%m-%d %H:%M')}
             except Exception as e:
                 st.error(f"❌ Wystąpił błąd: {e}")
                 
-                # ← NOWE: Lepszy error handling
+                # Lepszy error handling
                 import traceback
                 with st.expander("🔍 Szczegóły błędu (dla debugowania)"):
                     st.code(traceback.format_exc())

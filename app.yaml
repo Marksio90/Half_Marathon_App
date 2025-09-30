@@ -13,7 +13,7 @@ services:
   http_port: 8080
   
   instance_count: 1
-  instance_size_slug: basic-xxs  # 512MB RAM - wystarczające dla Streamlit
+  instance_size_slug: basic-xs  # ← ZWIĘKSZONE z basic-xxs (512MB → 1GB RAM)
   
   envs:
   # Digital Ocean Spaces (WYMAGANE)
@@ -51,8 +51,8 @@ services:
   
   health_check:
     http_path: /_stcore/health
-    initial_delay_seconds: 60
-    period_seconds: 10
-    timeout_seconds: 5
+    initial_delay_seconds: 120  # ← ZWIĘKSZONE z 60
+    period_seconds: 15           # ← ZWIĘKSZONE z 10
+    timeout_seconds: 10          # ← ZWIĘKSZONE z 5
     success_threshold: 1
-    failure_threshold: 3
+    failure_threshold: 5         # ← ZWIĘKSZONE z 3

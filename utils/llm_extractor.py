@@ -82,67 +82,54 @@ def parse_time_to_seconds(time_str: str) -> Optional[int]:
     except:
         return None
 
-def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
-    """Szybki parser REGEX dla podstawowych danych."""
-    t = " " + (text or "").lower() + " "
-    out: Dict[str, Optional[int | str]] = {
-        "gender": None, "age": None, "time_5km_seconds": None
-    }
-    
-    # Płeć
-    if re.search(r'\b(male|mężczyzn|męsk|facet|chłopak|man)\b', t):
-        out["gender"] = "male"
-    elif re.search(r'\b(female|kobiet|żeńsk|dziewczyn|woman)\b', t):
-        out["gender"] = "female"
-    elif re.search(r'\bm\b', t) and 'mam' not in t:
-        out["gender"] = "male"
-    elif re.search(r'\bk\b', t):
-        out["gender"] = "female"
-    
-    # Wiek
-    age_patterns = [
-        r'(\d{1,2})\s*(?:-\s*)?(?:letni|letnia|lat|lata|roku|years?\s*old|yo|y/o)',
-        r'age[:\s]*(\d{1,2})',
-        r'wiek[:\s]*(\d{1,2})',
-        r'\b(\d{1,2})\s+(?:lat|lata)\b',
-    ]
-    for pat in age_patterns:
-        m = re.search(pat, t)
+def _preparse_quick(text: str):
+    """
+    Ekstraktor REGEX-owy (fallback bez LLM)
+    Rozpoznaje: płeć, wiek, czas 5km (różne formaty)
+    """
+    text = (text or "").lower().strip()
+    result = {"gender": None, "age": None, "time_5km_seconds": None}
+
+    # --- 1️⃣ Płeć ---
+    if any(word in text for word in ["mężczyzna", "mezczyzna", "facet", "chłopak", "m "]):
+        result["gender"] = "male"
+    elif any(word in text for word in ["kobieta", "dziewczyna", "k "]):
+        result["gender"] = "female"
+    elif re.search(r"\bm\b", text):  # samo "M" oddzielone spacją
+        result["gender"] = "male"
+    elif re.search(r"\bk\b", text):
+        result["gender"] = "female"
+
+    # --- 2️⃣ Wiek ---
+    m = re.search(r"(\d{1,2})\s*(?:lat|roku|r\.|yo|years?)", text)
+    if m:
+        try:
+            age = int(m.group(1))
+            if 10 < age < 100:
+                result["age"] = age
+        except:
+            pass
+
+    # --- 3️⃣ Czas 5km ---
+    # Format MM:SS lub GG:MM:SS
+    m = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
+    if m:
+        h = int(m.group(1)) if m.lastindex == 3 else 0
+        m_ = int(m.group(2))
+        s = int(m.group(3)) if m.lastindex == 3 else int(m.group(2))
+        total_sec = h * 3600 + m_ * 60 + s
+        if 9 * 60 <= total_sec <= 60 * 60:
+            result["time_5km_seconds"] = total_sec
+
+    # Format „27 minut”, „24 minuty”, „29min”
+    if not result["time_5km_seconds"]:
+        m = re.search(r"(\d{1,2})\s*(?:min|minut|minuty|min\.?)", text)
         if m:
-            try:
-                age = int(m.group(1))
-                if 15 <= age <= 90:
-                    out["age"] = age
-                    break
-            except:
-                pass
-    
-    # Czas 5km
-    time_5k_patterns = [
-        r'5\s*k(?:m)?\s*[:\-]?\s*(\d{1,2}):([0-5]\d)',
-        r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2}):([0-5]\d)',
-        r'(\d{1,2}):([0-5]\d)\s*(?:na|for)?\s*5\s*k',
-    ]
-    
-    for pat in time_5k_patterns:
-        m = re.search(pat, t)
-        if m:
-            minutes = int(m.group(1))
-            seconds = int(m.group(2))
-            total = minutes * 60 + seconds
-            if 9*60 <= total <= 60*60:
-                out["time_5km_seconds"] = total
-                break
-    
-    if not out["time_5km_seconds"]:
-        m = re.search(r'5\s*k(?:m)?\s+(?:w|time|czas)?\s*(\d{1,2})\s*(?:minut|min)', t)
-        if m:
-            minutes = int(m.group(1))
-            total = minutes * 60
-            if 9*60 <= total <= 60*60:
-                out["time_5km_seconds"] = total
-    
-    return out
+            total_sec = int(m.group(1)) * 60
+            if 9 * 60 <= total_sec <= 60 * 60:
+                result["time_5km_seconds"] = total_sec
+
+    return result
 
 # ← NOWE: Cache dla LLM (zmniejsza koszty przy powtórkach)
 @lru_cache(maxsize=100)

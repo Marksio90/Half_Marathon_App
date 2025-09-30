@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime as dt
 
 # --- Streamlit runtime configuration (ważne dla DigitalOcean) ---
 port = os.getenv("PORT", "8080")
@@ -81,6 +81,9 @@ if "metrics" not in st.session_state:
         "ml_mode": 0,
         "fallback_mode": 0,
     }
+# Bufory do stabilnych pobrań
+for k in ("export_txt", "export_json", "export_basename"):
+    st.session_state.setdefault(k, None)
 
 # --- CSS ---
 st.markdown(
@@ -193,7 +196,7 @@ if predict_button:
                     try:
                         if langfuse_context:
                             langfuse_context.update_current_trace(
-                                user_id=f"user_{datetime.now().timestamp()}",
+                                user_id=f"user_{dt.now().timestamp()}",
                                 metadata={"input_length": len(text)},
                             )
                     except Exception:
@@ -253,8 +256,8 @@ if predict_button:
                     if not extracted_data.get("time_5km_seconds"):
                         missing.append("• **Czas 5km**: Podaj w formacie MM:SS (np. 24:30)")
                     st.markdown("**Brakujące informacje:**")
-                    for m in missing:
-                        st.markdown(m)
+                    for mline in missing:
+                        st.markdown(mline)
                     st.markdown('**Przykład poprawnego formatu:** *"M 30 lat, 5 km 24:30"*')
                     st.stop()
 
@@ -355,7 +358,7 @@ if predict_button:
                     # Zapis do historii
                     st.session_state.prediction_history.append(
                         {
-                            "timestamp": datetime.now(),
+                            "timestamp": dt.now(),
                             "input": user_input,
                             "prediction": prediction["formatted_time"],
                             "data": extracted_data,
@@ -365,71 +368,48 @@ if predict_button:
                     )
 
                     # -------------------------------
-                    # Eksport wyników (TXT / JSON)
+                    # Eksport wyników (TXT / JSON) — stabilnie przez session_state
                     # -------------------------------
                     import json as _json
-                    from datetime import datetime as _dt
 
-                    st.markdown("---")
-
-                    _pred_seconds = prediction.get("prediction_seconds", None)
-                    if _pred_seconds is not None:
-                        _avg_pace_sec = _pred_seconds / 21.0975
-                    else:
+                    pred_seconds = prediction.get("prediction_seconds")
+                    if pred_seconds is None:
+                        # awaryjnie policz z formatted_time
                         h, m, s = map(int, prediction["formatted_time"].split(":"))
-                        _pred_seconds = h * 3600 + m * 60 + s
-                        _avg_pace_sec = _pred_seconds / 21.0975
+                        pred_seconds = h * 3600 + m * 60 + s
 
-                    _avg_pace_txt = f"{int(_avg_pace_sec//60)}:{int(_avg_pace_sec%60):02d}"
-                    _t5 = extracted_data["time_5km_seconds"]
-                    _t5_txt = f"{_t5//60}:{_t5%60:02d}"
-                    _gender_txt = "Mężczyzna" if extracted_data["gender"] == "male" else "Kobieta"
+                    avg_pace_sec = pred_seconds / 21.0975
+                    avg_pace_txt = f"{int(avg_pace_sec//60)}:{int(avg_pace_sec%60):02d}"
+                    t5_txt = f"{extracted_data['time_5km_seconds']//60}:{extracted_data['time_5km_seconds']%60:02d}"
+                    gender_txt = "Mężczyzna" if extracted_data["gender"] == "male" else "Kobieta"
 
-                    _result_text = f"""\
-🏃 PREDYKCJA CZASU PÓŁMARATONU
-==============================
+                    result_text = (
+                        "🏃 PREDYKCJA CZASU PÓŁMARATONU\n"
+                        "==============================\n\n"
+                        "DANE WEJŚCIOWE:\n"
+                        f"- Płeć: {gender_txt}\n"
+                        f"- Wiek: {extracted_data['age']} lat\n"
+                        f"- Czas 5km: {t5_txt}\n\n"
+                        "PREDYKCJA:\n"
+                        f"- Czas: {prediction['formatted_time']}\n"
+                        f"- Średnie tempo: {avg_pace_txt} min/km\n"
+                        f"- Pewność: {prediction.get('confidence', 'N/A')}\n"
+                        f"- Tryb: {prediction['details']['mode']}\n\n"
+                        f"Data: {dt.now().strftime('%Y-%m-%d %H:%M')}\n"
+                    ).encode("utf-8")  # bytes
 
-DANE WEJŚCIOWE:
-- Płeć: {_gender_txt}
-- Wiek: {extracted_data['age']} lat
-- Czas 5km: {_t5_txt}
-
-PREDYKCJA:
-- Czas: {prediction['formatted_time']}
-- Średnie tempo: {_avg_pace_txt} min/km
-- Pewność: {prediction.get('confidence', 'N/A')}
-- Tryb: {prediction['details']['mode']}
-
-Data: {_dt.now().strftime('%Y-%m-%d %H:%M')}
-"""
-
-                    _export_payload = {
-                        "timestamp": _dt.now().isoformat(),
+                    export_payload = {
+                        "timestamp": dt.now().isoformat(),
                         "input": extracted_data,
                         "prediction": prediction,
                         "user_input_raw": user_input,
                     }
-                    _export_json = _json.dumps(_export_payload, indent=2, ensure_ascii=False)
+                    export_json = _json.dumps(export_payload, indent=2, ensure_ascii=False).encode("utf-8")
 
-                    col_save1, col_save2 = st.columns(2)
-                    with col_save1:
-                        st.download_button(
-                            label="📥 Pobierz TXT",
-                            data=_result_text,
-                            file_name=f"predykcja_{_dt.now().strftime('%Y%m%d_%H%M')}.txt",
-                            mime="text/plain",
-                            key="dl_txt",
-                            use_container_width=True,
-                        )
-                    with col_save2:
-                        st.download_button(
-                            label="📥 Pobierz JSON",
-                            data=_export_json,
-                            file_name=f"predykcja_{_dt.now().strftime('%Y%m%d_%H%M')}.json",
-                            mime="application/json",
-                            key="dl_json",
-                            use_container_width=True,
-                        )
+                    # zapisz do session_state (stabilne przyciski poniżej)
+                    st.session_state.export_txt = result_text
+                    st.session_state.export_json = export_json
+                    st.session_state.export_basename = f"predykcja_{dt.now().strftime('%Y%m%d_%H%M')}"
 
                     # Log do Langfuse (opcjonalnie)
                     if langfuse:
@@ -479,6 +459,36 @@ Data: {_dt.now().strftime('%Y-%m-%d %H:%M')}
                         )
                     except Exception:
                         pass
+
+# --- Sekcja pobierania (zawsze renderowana; stabilna) ---
+st.markdown("---")
+st.subheader("📥 Pobierz swoje wyniki")
+
+txt_ready = bool(st.session_state.get("export_txt"))
+json_ready = bool(st.session_state.get("export_json"))
+basename = st.session_state.get("export_basename") or "predykcja"
+
+col_d1, col_d2 = st.columns(2)
+with col_d1:
+    st.download_button(
+        "📄 Pobierz TXT",
+        data=st.session_state.export_txt if txt_ready else b"",
+        file_name=f"{basename}.txt",
+        mime="text/plain; charset=utf-8",
+        disabled=not txt_ready,
+        key="download_txt_global",
+        use_container_width=True,
+    )
+with col_d2:
+    st.download_button(
+        "🧾 Pobierz JSON",
+        data=st.session_state.export_json if json_ready else b"",
+        file_name=f"{basename}.json",
+        mime="application/json; charset=utf-8",
+        disabled=not json_ready,
+        key="download_json_global",
+        use_container_width=True,
+    )
 
 # --- Footer ---
 st.markdown("---")

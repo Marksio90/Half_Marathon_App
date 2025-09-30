@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any
 
 import pandas as pd
 
+from botocore.config import Config
+import boto3
 
 def _sha256_file(path: str) -> Optional[str]:
     try:
@@ -34,19 +36,8 @@ def _try_load_model(path: str):
             return None
 
 
-def _download_from_spaces(
-    bucket: str,
-    key: str,
-    dest_path: str,
-    endpoint: str,
-    access_key: str,
-    secret_key: str,
-) -> bool:
-    """Pobieranie modelu z DigitalOcean Spaces (S3-compatible)"""
+def _download_from_spaces(bucket, key, dest_path, endpoint, access_key, secret_key) -> bool:
     try:
-        from botocore.config import Config
-        import boto3
-
         s3 = boto3.client(
             "s3",
             region_name=os.getenv("DO_SPACES_REGION", "fra1"),
@@ -56,14 +47,12 @@ def _download_from_spaces(
             config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
         )
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        # UWAGA: klucz musi istnieć, a token mieć uprawnienia GetObject do tego klucza
         s3.download_file(bucket, key, dest_path)
         print(f"✅ Model pobrany z Spaces: s3://{bucket}/{key}")
         return True
     except Exception as e:
         print(f"⚠️ Nie udało się pobrać modelu z Spaces: {e}")
         return False
-
 
 class HalfMarathonPredictor:
     """

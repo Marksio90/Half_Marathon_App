@@ -1,9 +1,23 @@
+import hashlib
 from __future__ import annotations
 import os
 import math
 import pickle
 import pandas as pd
 from typing import Optional, Dict, Any
+import logging
+
+
+def _sha256_file(path: str) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
 
 def _try_load_model(path: str):
     """Próba załadowania modelu z pliku .pkl lub .joblib"""
@@ -116,7 +130,14 @@ class HalfMarathonPredictor:
             )
             
             if ok and os.path.isfile(cache_path):
-                m = _try_load_model(cache_path)
+                model_sha_env = os.getenv('MODEL_SHA256')
+if model_sha_env:
+    actual = _sha256_file(cache_path)
+    if actual and actual.lower() != model_sha_env.lower():
+        logging.warning('Model checksum mismatch: expected %s, got %s; re-downloading...', model_sha_env, actual)
+        m = None  # force re-download
+
+m = _try_load_model(cache_path)
                 if m is not None:
                     self.model = m
                     

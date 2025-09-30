@@ -1,277 +1,292 @@
 from __future__ import annotations
-import os, json, re
-from typing import Optional, Dict, Any
+
+import os
+import re
+import json
+import unicodedata
 from functools import lru_cache
+from typing import Optional, Dict, Any
 
-# OpenAI SDK
-from openai import OpenAI
-
-# Langfuse fallback
+# OpenAI SDK (opcjonalnie – używane tylko gdy jest OPENAI_API_KEY)
 try:
-    from langfuse.decorators import observe, langfuse_context
+    from openai import OpenAI  # type: ignore
+except Exception:  # brak SDK nie powinien psuć regexowego fallbacku
+    OpenAI = None  # type: ignore
+
+# Langfuse (opcjonalny)
+try:
+    from langfuse.decorators import observe, langfuse_context  # type: ignore
 except Exception:
     def observe(name: Optional[str] = None):
         def _decorator(func):
             return func
         return _decorator
+
     class _DummyCtx:
         @staticmethod
-        def update_current_observation(**kwargs): pass
-        @staticmethod
-        def update_current_trace(**kwargs): pass
-    langfuse_context = _DummyCtx()
-
-_client: Optional[OpenAI] = None
-
-def _get_openai_client() -> OpenAI:
-    """Inicjalizacja OpenAI klienta - FIX dla proxy issue"""
-    global _client
-    if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("Brak OPENAI_API_KEY w środowisku.")
-        
-        try:
-            _client = OpenAI(
-                api_key=api_key,
-                timeout=30.0,
-                max_retries=2
-            )
-        except TypeError as e:
-            if 'proxies' in str(e):
-                _client = OpenAI(api_key=api_key)
-            else:
-                raise
-    return _client
-
-def parse_time_to_seconds(time_str: str) -> Optional[int]:
-    """Ulepszone parsowanie czasu z lepszą obsługą formatów."""
-    if not time_str:
-        return None
-    
-    s = str(time_str).lower().strip()
-    
-    # Format HH:MM:SS lub MM:SS
-    time_match = re.search(r'(\d{1,2}):([0-5]\d)(?::([0-5]\d))?', time_str)
-    if time_match:
-        h_or_m = int(time_match.group(1))
-        m_or_s = int(time_match.group(2))
-        s_val = int(time_match.group(3)) if time_match.group(3) else 0
-        
-        if time_match.group(3):
-            return h_or_m * 3600 + m_or_s * 60 + s_val
-        else:
-            return h_or_m * 60 + m_or_s
-    
-    # Format słowny: "27 minut", "23 min 45 s"
-    min_match = re.search(r'(\d{1,2})\s*(?:minut|min)', s)
-    sec_match = re.search(r'(\d{1,2})\s*(?:sekund|s\b)', s)
-    
-    if min_match:
-        minutes = int(min_match.group(1))
-        seconds = int(sec_match.group(1)) if sec_match else 0
-        return minutes * 60 + seconds
-    
-    # Próba parsowania jako liczba
-    try:
-        val = float(re.sub(r'[^\d.]', '', s))
-        if val < 100:
-            return int(val * 60)
-        else:
-            return int(val)
-    except:
-        return None
-
-def _preparse_quick(text: str):
-    """
-    Ekstraktor REGEX-owy (fallback bez LLM)
-    Rozpoznaje: płeć, wiek, czas 5km (różne formaty)
-    """
-    text = (text or "").lower().strip()
-    result = {"gender": None, "age": None, "time_5km_seconds": None}
-
-    # --- 1️⃣ Płeć ---
-    if any(word in text for word in ["mężczyzna", "mezczyzna", "facet", "chłopak", "m "]):
-        result["gender"] = "male"
-    elif any(word in text for word in ["kobieta", "dziewczyna", "k "]):
-        result["gender"] = "female"
-    elif re.search(r"\bm\b", text):  # samo "M" oddzielone spacją
-        result["gender"] = "male"
-    elif re.search(r"\bk\b", text):
-        result["gender"] = "female"
-
-    # --- 2️⃣ Wiek ---
-    m = re.search(r"(\d{1,2})\s*(?:lat|roku|r\.|yo|years?)", text)
-    if m:
-        try:
-            age = int(m.group(1))
-            if 10 < age < 100:
-                result["age"] = age
-        except:
+        def update_current_observation(**kwargs):  # no-op
             pass
 
-    # --- 3️⃣ Czas 5km ---
-    # Format MM:SS lub GG:MM:SS
-    m = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
+        @staticmethod
+        def update_current_trace(**kwargs):  # no-op
+            pass
+
+    langfuse_context = _DummyCtx()  # type: ignore
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def _norm(s: str) -> str:
+    """Lowercase + usunięcie ogonków (mężczyzna == mezczyzna)."""
+    s = (s or "").lower()
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+
+def _time_str_to_seconds(ts: str) -> Optional[int]:
+    """Konwersja 'MM:SS' lub 'H:MM:SS' na sekundy."""
+    try:
+        parts = [int(p) for p in ts.split(":")]
+        if len(parts) == 2:
+            mm, ss = parts
+            return mm * 60 + ss
+        if len(parts) == 3:
+            hh, mm, ss = parts
+            return hh * 3600 + mm * 60 + ss
+    except Exception:
+        return None
+    return None
+
+
+def _accept_5k_range(sec: Optional[int]) -> Optional[int]:
+    """Akceptuj tylko sensowne czasy 5 km (9–60 minut)."""
+    if sec is None:
+        return None
+    return sec if (9 * 60) <= sec <= (60 * 60) else None
+
+
+# ----------------------------
+# Regexowy fallback (szybki i darmowy)
+# ----------------------------
+
+def _preparse_quick(text: str) -> Dict[str, Optional[int | str]]:
+    """
+    Szybka ekstrakcja bez LLM.
+    Rozpoznaje:
+      - płeć (PL/EN: mężczyzna/kobieta, m/k, male/female, man/men/woman)
+      - wiek (np. '32 lata')
+      - czas 5km: 'MM:SS', 'H:MM:SS', '27 minut', także w kontekście '5km ...'
+    Odrzuca czasy poza zakresem 9–60 min.
+    """
+    t = _norm(text)
+    out: Dict[str, Optional[int | str]] = {
+        "gender": None,
+        "age": None,
+        "time_5km_seconds": None,
+    }
+
+    # --- GENDER ---
+    # uwzględniamy 'men' (częsty skrót), 'm', 'k', itp.
+    if re.search(r"\b(m|mezczyzna|facet|chlopak|male|man|men)\b", t):
+        out["gender"] = "male"
+    elif re.search(r"\b(k|kobieta|female|woman|dziewczyna)\b", t):
+        out["gender"] = "female"
+
+    # --- AGE ---
+    m = re.search(r"\b(\d{1,2})\s*(?:lat|rok|lata|r\.|years?|yo)\b", t)
     if m:
-        h = int(m.group(1)) if m.lastindex == 3 else 0
-        m_ = int(m.group(2))
-        s = int(m.group(3)) if m.lastindex == 3 else int(m.group(2))
-        total_sec = h * 3600 + m_ * 60 + s
-        if 9 * 60 <= total_sec <= 60 * 60:
-            result["time_5km_seconds"] = total_sec
+        age = int(m.group(1))
+        if 10 < age < 100:
+            out["age"] = age
 
-    # Format „27 minut”, „24 minuty”, „29min”
-    if not result["time_5km_seconds"]:
-        m = re.search(r"(\d{1,2})\s*(?:min|minut|minuty|min\.?)", text)
+    # --- TIME preferencyjnie w kontekście 5 km ---
+    # 5km ... 22:30
+    m = re.search(r"(?:\b5\s*km\b|\b5k\b)\D{0,20}(\d{1,2}:\d{2}(?::\d{2})?)\b", t)
+    if m:
+        out["time_5km_seconds"] = _accept_5k_range(_time_str_to_seconds(m.group(1)))
+
+    # 5km ... 27 minut
+    if not out["time_5km_seconds"]:
+        m = re.search(r"(?:\b5\s*km\b|\b5k\b)\D{0,20}\b(\d{1,3})\s*(?:min(?:ut(?:y|a)?)?\.?)\b", t)
         if m:
-            total_sec = int(m.group(1)) * 60
-            if 9 * 60 <= total_sec <= 60 * 60:
-                result["time_5km_seconds"] = total_sec
+            out["time_5km_seconds"] = _accept_5k_range(int(m.group(1)) * 60)
 
-    return result
+    # --- TIME – ogólny fallback (poza kontekstem 5 km) ---
+    if not out["time_5km_seconds"]:
+        m = re.search(r"\b(\d{1,2}:\d{2}(?::\d{2})?)\b", t)
+        if m:
+            out["time_5km_seconds"] = _accept_5k_range(_time_str_to_seconds(m.group(1)))
 
-# ← NOWE: Cache dla LLM (zmniejsza koszty przy powtórkach)
+    if not out["time_5km_seconds"]:
+        m = re.search(r"\b(\d{1,3})\s*(?:min(?:ut(?:y|a)?)?\.?)\b", t)
+        if m:
+            out["time_5km_seconds"] = _accept_5k_range(int(m.group(1)) * 60)
+
+    return out
+
+
+# ----------------------------
+# LLM (opcjonalnie; z cache; bezpieczne gdy brak klucza)
+# ----------------------------
+
+_client: Optional["OpenAI"] = None  # type: ignore
+
+
+def _get_openai_client():
+    """Inicjalizacja klienta OpenAI. Zwraca None, jeśli brak klucza/SDK."""
+    global _client
+    if _client is not None:
+        return _client
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or OpenAI is None:
+        return None
+
+    try:
+        _client = OpenAI(api_key=api_key, timeout=30.0, max_retries=2)  # type: ignore
+    except TypeError as e:
+        # starsze SDK – bez paramów
+        if "proxies" in str(e):
+            _client = OpenAI(api_key=api_key)  # type: ignore
+        else:
+            return None
+    return _client
+
+
+# Cache dla LLM
 @lru_cache(maxsize=100)
 def _cached_llm_call(text: str, model: str) -> str:
-    """Cached LLM call - zapobiega powtórnym wywołaniom dla tego samego tekstu"""
+    """
+    Cached call do LLM. Gdy brak klienta/klucza – zwraca pusty string.
+    """
     client = _get_openai_client()
-    
-    system_prompt = """Jesteś asystentem do ekstrakcji danych dla predyktora czasu półmaratonu.
+    if client is None:
+        return ""
 
-Wydobądź następujące informacje z tekstu użytkownika:
-- gender: "male" lub "female" (wymagane)
-- age: liczba całkowita, wiek w latach (wymagane)
-- time_5km_seconds: czas na 5km w SEKUNDACH jako liczba całkowita (wymagane)
-
-WAŻNE zasady konwersji czasu:
-- Format "24:30" = 24 minuty 30 sekund = 1470 sekund (24*60 + 30)
-- Format "27 minut" = 27 minut = 1620 sekund (27*60)
-- Format "23:45" = 23 minuty 45 sekund = 1425 sekund (23*60 + 45)
-
-Zwróć TYLKO poprawny JSON:
-{"gender": "male"|"female"|null, "age": int|null, "time_5km_seconds": int|null}
-
-Przykłady:
-Input: "M 30 lat, 5km 24:30"
-Output: {"gender": "male", "age": 30, "time_5km_seconds": 1470}
-
-Input: "Kobieta 28 lat, 5k w 27 minut"
-Output: {"gender": "female", "age": 28, "time_5km_seconds": 1620}"""
-    
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ],
-        temperature=0.1,
-        max_tokens=150
+    system_prompt = (
+        "Jesteś asystentem do ekstrakcji danych dla predyktora czasu półmaratonu.\n\n"
+        "Wydobądź następujące informacje z tekstu użytkownika:\n"
+        "- gender: \"male\" lub \"female\" (wymagane)\n"
+        "- age: liczba całkowita, wiek w latach (wymagane)\n"
+        "- time_5km_seconds: czas na 5km w SEKUNDACH jako liczba całkowita (wymagane)\n\n"
+        "Zwróć TYLKO poprawny JSON:\n"
+        "{\"gender\": \"male\"|\"female\"|null, \"age\": int|null, \"time_5km_seconds\": int|null}\n\n"
+        "Przykłady:\n"
+        "Input: \"M 30 lat, 5km 24:30\"\n"
+        "Output: {\"gender\": \"male\", \"age\": 30, \"time_5km_seconds\": 1470}\n\n"
+        "Input: \"Kobieta 28 lat, 5k w 27 minut\"\n"
+        "Output: {\"gender\": \"female\", \"age\": 28, \"time_5km_seconds\": 1620}"
     )
-    
-    return resp.choices[0].message.content or ""
+
+    try:
+        resp = client.chat.completions.create(  # type: ignore
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.1,
+            max_tokens=150,
+        )
+        return resp.choices[0].message.content or ""
+    except Exception:
+        return ""
+
 
 @observe(name="llm_data_extraction")
 def extract_user_data(text: str) -> Dict[str, Optional[int | str]]:
-    """LLM-based ekstrakcja danych z walidacją - ULEPSZONA z cache"""
-    out = {"gender": None, "age": None, "time_5km_seconds": None}
-    
+    """
+    Ekstrakcja z użyciem LLM (gdy dostępny). Zawiera walidację zakresów.
+    Zwraca puste pola, jeśli LLM niedostępny/błąd – aby fallback mógł działać.
+    """
+    out: Dict[str, Optional[int | str]] = {
+        "gender": None,
+        "age": None,
+        "time_5km_seconds": None,
+    }
+
     try:
         try:
-            langfuse_context.update_current_observation(
-                input=text, 
-                metadata={"task": "data_extraction", "input_length": len(text)}
+            langfuse_context.update_current_observation(  # type: ignore
+                input=text, metadata={"task": "data_extraction", "input_length": len(text)}
             )
-        except:
+        except Exception:
             pass
-        
-        # ← NOWE: Użyj cached call
+
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         response_text = _cached_llm_call(text, model)
-        
+        if not response_text:
+            # brak LLM – wracamy z pustymi polami
+            return out
+
         # Wyciągnij JSON
-        m = re.search(r'\{.*\}', response_text, re.DOTALL)
+        m = re.search(r"\{.*\}", response_text, re.DOTALL)
         if not m:
-            raise ValueError("Brak JSON w odpowiedzi LLM")
-        
+            return out
+
         data = json.loads(m.group())
-        
-        # Walidacja i normalizacja płci
+
+        # gender
         g = str(data.get("gender") or "").lower()
-        if g in {"male", "m", "man", "mężczyzna", "męski"}:
+        if g in {"male", "m", "man", "men", "mezczyzna"}:
             out["gender"] = "male"
-        elif g in {"female", "f", "woman", "kobieta", "żeński"}:
+        elif g in {"female", "f", "woman", "kobieta"}:
             out["gender"] = "female"
-        
-        # Walidacja wieku
-        age = data.get("age")
+
+        # age
         try:
-            age = int(age)
+            age = int(data.get("age"))
             if 15 <= age <= 90:
                 out["age"] = age
-        except:
+        except Exception:
             pass
-        
-        # Walidacja czasu 5km
-        t5 = data.get("time_5km_seconds")
+
+        # time
         try:
-            t5 = int(t5)
-            if 9*60 <= t5 <= 60*60:
-                out["time_5km_seconds"] = t5
-        except:
+            t5 = int(data.get("time_5km_seconds"))
+            out["time_5km_seconds"] = _accept_5k_range(t5)
+        except Exception:
             pass
-        
-        # Logowanie do Langfuse
+
         try:
-            langfuse_context.update_current_observation(
-                output=out,
-                metadata={
-                    "model": model,
-                    "success": all(out.values()),
-                    "cached": True  # ← Info że używamy cache
-                }
+            langfuse_context.update_current_observation(  # type: ignore
+                output=out, metadata={"model": model, "success": all(out.values()), "cached": True}
             )
-        except:
+        except Exception:
             pass
-            
+
     except Exception as e:
         print(f"[llm_extractor] LLM error: {e}")
         try:
-            langfuse_context.update_current_observation(
-                output={"error": str(e)},
-                metadata={"success": False}
+            langfuse_context.update_current_observation(  # type: ignore
+                output={"error": str(e)}, metadata={"success": False}
             )
-        except:
+        except Exception:
             pass
-    
+
     return out
+
 
 def extract_user_data_auto(text: str) -> Dict[str, Optional[int | str]]:
     """
-    Automatyczna ekstrakcja - najpierw REGEX, potem LLM dla braków.
-    Redukuje koszty API przy prostych inputach.
+    Warstwa 1: szybki REGEX.
+    Warstwa 2: LLM tylko dla braków (jeśli dostępny).
     """
-    # Warstwa 1: Szybki REGEX
     quick = _preparse_quick(text)
-    
-    # Jeśli wszystko znalezione - zwróć od razu (70% przypadków!)
     if all(quick.values()):
         return quick
-    
-    # Warstwa 2: LLM dla braków
+
     llm = extract_user_data(text)
-    
-    # Merge: priorytet dla REGEX (szybszy, dokładniejszy)
-    result = {
+
+    return {
         "gender": quick["gender"] or llm.get("gender"),
         "age": quick["age"] or llm.get("age"),
         "time_5km_seconds": quick["time_5km_seconds"] or llm.get("time_5km_seconds"),
     }
-    
-    return result
 
-# ← NOWE: Funkcja do czyszczenia cache (użyj w maintenance)
+
 def clear_llm_cache():
-    """Wyczyść cache LLM - użyj jeśli model się zmienił"""
+    """Wyczyść cache LLM (użyj np. po zmianie modelu)."""
     _cached_llm_call.cache_clear()
     print("✅ LLM cache wyczyszczony")
